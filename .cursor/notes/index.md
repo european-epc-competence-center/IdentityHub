@@ -111,6 +111,16 @@ IdentityHub/
 - **EDC Integration**: Deep integration with EDC ecosystem not fully apparent from repository structure alone
 - **Deployment Model**: Recent decision (2025-02-24) mandates embedded STS deployment only
 
+## Documentation Files
+
+- **[Build and Compilation Guide](build_and_compilation.md)** - Java 17 requirements and build instructions
+- **[Participant Context Architecture](participant_context.md)** - Multi-tenancy and isolation mechanisms
+- **[Verifiable Credentials Management](verifiable_credentials.md)** - Credential lifecycle and storage
+- **[Presentation Services](presentation_services.md)** - Verifiable Presentation generation
+- **[Protocols and APIs](protocols_and_apis.md)** - DCP protocol implementation and API architecture
+- **[Security Architecture](security_architecture.md)** - Authentication, authorization, and security model
+- **[Repository Structure](repository_structure.md)** - Complete codebase organization and module relationships
+
 ## Quick Navigation
 
 | Component | Description | Key Files |
