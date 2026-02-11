@@ -23,7 +23,7 @@ import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
 import org.eclipse.edc.identityhub.protocols.dcp.spi.DcpIssuerTokenVerifier;
 import org.eclipse.edc.identityhub.protocols.dcp.spi.model.CredentialOfferMessage;
-import org.eclipse.edc.identityhub.spi.participantcontext.ParticipantContextService;
+import org.eclipse.edc.identityhub.spi.participantcontext.IdentityHubParticipantContextService;
 import org.eclipse.edc.identityhub.spi.verifiablecredentials.model.CredentialObject;
 import org.eclipse.edc.identityhub.spi.verifiablecredentials.model.CredentialOffer;
 import org.eclipse.edc.identityhub.spi.verifiablecredentials.model.CredentialOfferStatus;
@@ -38,7 +38,7 @@ import org.eclipse.edc.web.spi.exception.ValidationFailureException;
 
 import static jakarta.ws.rs.core.HttpHeaders.AUTHORIZATION;
 import static jakarta.ws.rs.core.MediaType.APPLICATION_JSON;
-import static org.eclipse.edc.iam.identitytrust.spi.DcpConstants.DSPACE_DCP_NAMESPACE_V_1_0;
+import static org.eclipse.edc.iam.decentralizedclaims.spi.DcpConstants.DSPACE_DCP_NAMESPACE_V_1_0;
 import static org.eclipse.edc.identityhub.protocols.dcp.spi.DcpConstants.DCP_SCOPE_V_1_0;
 import static org.eclipse.edc.identityhub.protocols.dcp.spi.model.CredentialOfferMessage.CREDENTIAL_OFFER_MESSAGE_TERM;
 import static org.eclipse.edc.identityhub.spi.participantcontext.ParticipantContextId.onEncoded;
@@ -52,14 +52,14 @@ public class CredentialOfferApiController implements CredentialOfferApi {
     private final JsonObjectValidatorRegistry validatorRegistry;
     private final TypeTransformerRegistry transformerRegistry;
     private final DcpIssuerTokenVerifier issuerTokenVerifier;
-    private final ParticipantContextService participantContextService;
+    private final IdentityHubParticipantContextService participantContextService;
     private final CredentialOfferService credentialOfferService;
     private final JsonLd jsonLd;
 
     public CredentialOfferApiController(JsonObjectValidatorRegistry validatorRegistry,
                                         TypeTransformerRegistry transformerRegistry,
                                         DcpIssuerTokenVerifier issuerTokenVerifier,
-                                        ParticipantContextService participantContextService, CredentialOfferService credentialOfferService, JsonLd jsonLd) {
+                                        IdentityHubParticipantContextService participantContextService, CredentialOfferService credentialOfferService, JsonLd jsonLd) {
         this.validatorRegistry = validatorRegistry;
         this.transformerRegistry = transformerRegistry;
         this.issuerTokenVerifier = issuerTokenVerifier;

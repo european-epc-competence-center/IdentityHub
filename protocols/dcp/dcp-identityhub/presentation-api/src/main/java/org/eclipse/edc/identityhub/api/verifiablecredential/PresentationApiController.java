@@ -24,9 +24,9 @@ import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.Response;
-import org.eclipse.edc.iam.identitytrust.spi.model.PresentationQueryMessage;
-import org.eclipse.edc.identityhub.spi.participantcontext.ParticipantContextService;
-import org.eclipse.edc.identityhub.spi.participantcontext.model.ParticipantContext;
+import org.eclipse.edc.iam.decentralizedclaims.spi.model.PresentationQueryMessage;
+import org.eclipse.edc.identityhub.spi.participantcontext.IdentityHubParticipantContextService;
+import org.eclipse.edc.identityhub.spi.participantcontext.model.IdentityHubParticipantContext;
 import org.eclipse.edc.identityhub.spi.verifiablecredentials.generator.VerifiablePresentationService;
 import org.eclipse.edc.identityhub.spi.verifiablecredentials.resolution.CredentialQueryResolver;
 import org.eclipse.edc.identityhub.spi.verification.SelfIssuedTokenVerifier;
@@ -52,9 +52,9 @@ import java.util.Optional;
 
 import static jakarta.ws.rs.core.HttpHeaders.AUTHORIZATION;
 import static jakarta.ws.rs.core.MediaType.APPLICATION_JSON;
-import static org.eclipse.edc.iam.identitytrust.spi.DcpConstants.DSPACE_DCP_NAMESPACE_V_0_8;
-import static org.eclipse.edc.iam.identitytrust.spi.DcpConstants.DSPACE_DCP_NAMESPACE_V_1_0;
-import static org.eclipse.edc.iam.identitytrust.spi.model.PresentationQueryMessage.PRESENTATION_QUERY_MESSAGE_TERM;
+import static org.eclipse.edc.iam.decentralizedclaims.spi.DcpConstants.DSPACE_DCP_NAMESPACE_V_0_8;
+import static org.eclipse.edc.iam.decentralizedclaims.spi.DcpConstants.DSPACE_DCP_NAMESPACE_V_1_0;
+import static org.eclipse.edc.iam.decentralizedclaims.spi.model.PresentationQueryMessage.PRESENTATION_QUERY_MESSAGE_TERM;
 import static org.eclipse.edc.identityhub.protocols.dcp.spi.DcpConstants.DCP_SCOPE_V_0_8;
 import static org.eclipse.edc.identityhub.protocols.dcp.spi.DcpConstants.DCP_SCOPE_V_1_0;
 import static org.eclipse.edc.identityhub.spi.participantcontext.ParticipantContextId.onEncoded;
@@ -71,7 +71,7 @@ public class PresentationApiController implements PresentationApi {
     private final SelfIssuedTokenVerifier selfIssuedTokenVerifier;
     private final VerifiablePresentationService verifiablePresentationService;
     private final Monitor monitor;
-    private final ParticipantContextService participantContextService;
+    private final IdentityHubParticipantContextService participantContextService;
     private final JsonLd jsonLd;
 
     private final Map<JsonLdNamespace, String> protocols = Map.of(
@@ -80,7 +80,7 @@ public class PresentationApiController implements PresentationApi {
     );
 
     public PresentationApiController(JsonObjectValidatorRegistry validatorRegistry, TypeTransformerRegistry transformerRegistry, CredentialQueryResolver queryResolver,
-                                     SelfIssuedTokenVerifier selfIssuedTokenVerifier, VerifiablePresentationService verifiablePresentationService, Monitor monitor, ParticipantContextService participantContextService, JsonLd jsonLd) {
+                                     SelfIssuedTokenVerifier selfIssuedTokenVerifier, VerifiablePresentationService verifiablePresentationService, Monitor monitor, IdentityHubParticipantContextService participantContextService, JsonLd jsonLd) {
         this.validatorRegistry = validatorRegistry;
         this.transformerRegistry = transformerRegistry;
         this.queryResolver = queryResolver;
@@ -124,7 +124,7 @@ public class PresentationApiController implements PresentationApi {
 
         // verify that the participant actually exists
         participantContextService.getParticipantContext(participantContextId)
-                .orElseThrow(exceptionMapper(ParticipantContext.class, participantContextId));
+                .orElseThrow(exceptionMapper(IdentityHubParticipantContext.class, participantContextId));
 
 
         // verify and validate the requestor's SI token
@@ -172,7 +172,7 @@ public class PresentationApiController implements PresentationApi {
                 .message("Not implemented.")
                 .type("Not implemented.")
                 .build();
-        return Response.status(503)
+        return Response.status(501)
                 .entity(error)
                 .build();
     }

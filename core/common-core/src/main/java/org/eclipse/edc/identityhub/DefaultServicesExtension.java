@@ -15,7 +15,8 @@
 package org.eclipse.edc.identityhub;
 
 import org.eclipse.edc.http.spi.EdcHttpClient;
-import org.eclipse.edc.iam.identitytrust.spi.verification.SignatureSuiteRegistry;
+import org.eclipse.edc.iam.decentralizedclaims.spi.verification.SignatureSuiteRegistry;
+import org.eclipse.edc.iam.did.spi.resolution.DidPublicKeyResolver;
 import org.eclipse.edc.iam.verifiablecredentials.revocation.RevocationServiceRegistryImpl;
 import org.eclipse.edc.iam.verifiablecredentials.revocation.bitstring.BitstringStatusListRevocationService;
 import org.eclipse.edc.iam.verifiablecredentials.revocation.statuslist2021.StatusList2021RevocationService;
@@ -28,11 +29,9 @@ import org.eclipse.edc.identityhub.defaults.store.InMemoryCredentialOfferStore;
 import org.eclipse.edc.identityhub.defaults.store.InMemoryCredentialStore;
 import org.eclipse.edc.identityhub.defaults.store.InMemoryHolderCredentialRequestStore;
 import org.eclipse.edc.identityhub.defaults.store.InMemoryKeyPairResourceStore;
-import org.eclipse.edc.identityhub.defaults.store.InMemoryParticipantContextStore;
 import org.eclipse.edc.identityhub.defaults.store.InMemorySignatureSuiteRegistry;
 import org.eclipse.edc.identityhub.spi.credential.request.store.HolderCredentialRequestStore;
 import org.eclipse.edc.identityhub.spi.keypair.store.KeyPairResourceStore;
-import org.eclipse.edc.identityhub.spi.participantcontext.store.ParticipantContextStore;
 import org.eclipse.edc.identityhub.spi.transformation.ScopeToCriterionTransformer;
 import org.eclipse.edc.identityhub.spi.verifiablecredentials.store.CredentialOfferStore;
 import org.eclipse.edc.identityhub.spi.verifiablecredentials.store.CredentialStore;
@@ -52,14 +51,15 @@ import org.eclipse.edc.spi.types.TypeManager;
 import org.eclipse.edc.token.rules.ExpirationIssuedAtValidationRule;
 import org.eclipse.edc.token.rules.NotBeforeValidationRule;
 import org.eclipse.edc.token.spi.TokenValidationRulesRegistry;
+import org.eclipse.edc.token.spi.TokenValidationService;
 import org.eclipse.edc.verifiablecredentials.jwt.rules.JtiValidationRule;
 
 import java.net.URISyntaxException;
 import java.time.Clock;
 import java.util.List;
 
-import static org.eclipse.edc.iam.identitytrust.spi.DcpConstants.DCP_CONTEXT_URL;
-import static org.eclipse.edc.iam.identitytrust.spi.DcpConstants.DSPACE_DCP_V_1_0_CONTEXT;
+import static org.eclipse.edc.iam.decentralizedclaims.spi.DcpConstants.DCP_CONTEXT_URL;
+import static org.eclipse.edc.iam.decentralizedclaims.spi.DcpConstants.DSPACE_DCP_V_1_0_CONTEXT;
 import static org.eclipse.edc.iam.verifiablecredentials.spi.VcConstants.DID_CONTEXT_URL;
 import static org.eclipse.edc.iam.verifiablecredentials.spi.VcConstants.JWS_2020_URL;
 import static org.eclipse.edc.iam.verifiablecredentials.spi.VcConstants.PRESENTATION_EXCHANGE_URL;
@@ -112,6 +112,10 @@ public class DefaultServicesExtension implements ServiceExtension {
     private JtiValidationStore jtiValidationStore;
     @Inject
     private EdcHttpClient httpClient;
+    @Inject
+    private TokenValidationService tokenValidationService;
+    @Inject
+    private DidPublicKeyResolver didPublicKeyResolver;
 
     @Override
     public String name() {
@@ -146,11 +150,6 @@ public class DefaultServicesExtension implements ServiceExtension {
     }
 
     @Provider(isDefault = true)
-    public ParticipantContextStore createDefaultParticipantContextStore() {
-        return new InMemoryParticipantContextStore();
-    }
-
-    @Provider(isDefault = true)
     public KeyPairResourceStore createDefaultKeyPairResourceStore() {
         return new InMemoryKeyPairResourceStore();
     }
@@ -164,11 +163,11 @@ public class DefaultServicesExtension implements ServiceExtension {
 
     @Provider(isDefault = true)
     public RevocationServiceRegistry createRevocationListService(ServiceExtensionContext context) {
-        var acceptedContentTypes = List.of(contentTypes.split(","));
         if (revocationService == null) {
             revocationService = new RevocationServiceRegistryImpl(context.getMonitor());
-            revocationService.addService(StatusList2021Status.TYPE, new StatusList2021RevocationService(typeManager.getMapper(), revocationCacheValidity, acceptedContentTypes, httpClient));
-            revocationService.addService(BitstringStatusListStatus.TYPE, new BitstringStatusListRevocationService(typeManager.getMapper(), revocationCacheValidity, acceptedContentTypes, httpClient));
+            var acceptedContentTypes = List.of(contentTypes.split(","));
+            revocationService.addService(StatusList2021Status.TYPE, new StatusList2021RevocationService(typeManager.getMapper(), revocationCacheValidity, acceptedContentTypes, httpClient, tokenValidationService, didPublicKeyResolver));
+            revocationService.addService(BitstringStatusListStatus.TYPE, new BitstringStatusListRevocationService(typeManager.getMapper(), revocationCacheValidity, acceptedContentTypes, httpClient, tokenValidationService, didPublicKeyResolver));
         }
         return revocationService;
     }

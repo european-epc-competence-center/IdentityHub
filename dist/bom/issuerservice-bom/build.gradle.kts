@@ -18,13 +18,12 @@ plugins {
 }
 
 dependencies {
-    api(project(":dist:bom:issuerservice-base-bom"))
+    implementation(project(":dist:bom:issuerservice-base-bom"))
+    implementation(project(":extensions:api:identityhub-api-authentication"))
+    implementation(project(":extensions:api:identityhub-api-authorization"))
+    implementation(project(":extensions:api:issuer-admin-api:issuer-admin-api-authentication"))
     // needed for interaction with the embedded STS
-    runtimeOnly(project(":extensions:sts:sts-core"))
-    runtimeOnly(project(":extensions:sts:sts-account-service-local"))
-    runtimeOnly(project(":extensions:sts:sts-api"))
-}
-
-edcBuild {
-
+    implementation(project(":extensions:sts:sts-core"))
+    implementation(project(":extensions:sts:sts-account-service-local"))
+    implementation(project(":extensions:sts:sts-api"))
 }

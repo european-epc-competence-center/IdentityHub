@@ -14,22 +14,30 @@
 
 package org.eclipse.edc.identityhub.spi.keypair.model;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnore;
-import org.eclipse.edc.identityhub.spi.participantcontext.model.AbstractParticipantResource;
-import org.eclipse.edc.identityhub.spi.participantcontext.model.ParticipantContext;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.annotation.JsonSetter;
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
+import com.fasterxml.jackson.databind.annotation.JsonPOJOBuilder;
+import org.eclipse.edc.identityhub.spi.participantcontext.model.IdentityHubParticipantContext;
+import org.eclipse.edc.identityhub.spi.participantcontext.model.KeyPairUsage;
+import org.eclipse.edc.participantcontext.spi.types.AbstractParticipantResource;
 import org.eclipse.edc.spi.query.Criterion;
 import org.eclipse.edc.spi.query.QuerySpec;
 import org.eclipse.edc.spi.security.Vault;
 
 import java.time.Duration;
 import java.util.Objects;
+import java.util.Set;
 
 /**
- * A {@link KeyPairResource} contains key material for a particular {@link ParticipantContext}. The public key is stored in the database in serialized form (JWK or PEM) and the private
+ * A {@link KeyPairResource} contains key material for a particular {@link IdentityHubParticipantContext}. The public key is stored in the database in serialized form (JWK or PEM) and the private
  * key is referenced via an alias, it is actually stored in a {@link Vault}.
  */
+
+@JsonDeserialize(builder = KeyPairResource.Builder.class)
 public class KeyPairResource extends AbstractParticipantResource {
-    private String id;
     private long timestamp;
     private String keyId;
     private String groupName;
@@ -40,6 +48,7 @@ public class KeyPairResource extends AbstractParticipantResource {
     private String serializedPublicKey;
     private String privateKeyAlias;
     private int state;
+    private Set<KeyPairUsage> usage = Set.of();
 
     private KeyPairResource() {
     }
@@ -48,20 +57,16 @@ public class KeyPairResource extends AbstractParticipantResource {
         return QuerySpec.Builder.newInstance().filter(new Criterion("id", "=", id));
     }
 
+    public Set<KeyPairUsage> getUsage() {
+        return usage;
+    }
+
     public String getGroupName() {
         return groupName;
     }
 
     /**
-     * The database ID of this KeyPairResource.
-     */
-    public String getId() {
-        return id;
-    }
-
-
-    /**
-     * Whether this KeyPair is the default for a {@link ParticipantContext}.
+     * Whether this KeyPair is the default for a {@link IdentityHubParticipantContext}.
      */
     public boolean isDefaultPair() {
         return defaultPair;
@@ -73,7 +78,6 @@ public class KeyPairResource extends AbstractParticipantResource {
     public String getKeyId() {
         return keyId;
     }
-
 
     /**
      * The alias under which the private key is stored in the vault.
@@ -120,7 +124,6 @@ public class KeyPairResource extends AbstractParticipantResource {
         return keyContext;
     }
 
-
     public int getState() {
         return state;
     }
@@ -141,23 +144,32 @@ public class KeyPairResource extends AbstractParticipantResource {
         state = KeyPairState.ACTIVATED.code();
     }
 
+    @JsonPOJOBuilder(withPrefix = "")
     public static final class Builder extends AbstractParticipantResource.Builder<KeyPairResource, KeyPairResource.Builder> {
 
         private Builder() {
             super(new KeyPairResource());
         }
 
+        @JsonCreator
         public static Builder newInstance() {
             return new Builder();
         }
 
-        public Builder groupName(String groupName) {
-            entity.groupName = groupName;
-            return this;
+        public static Builder newCredentialSigning() {
+            return new Builder().usage(KeyPairUsage.CREDENTIAL_SIGNING);
         }
 
-        public Builder id(String id) {
-            entity.id = id;
+        public static Builder newPresentationSigning() {
+            return new Builder().usage(KeyPairUsage.PRESENTATION_SIGNING);
+        }
+
+        public static Builder newTokenSigning() {
+            return new Builder().usage(KeyPairUsage.TOKEN_SIGNING);
+        }
+
+        public Builder groupName(String groupName) {
+            entity.groupName = groupName;
             return this;
         }
 
@@ -168,11 +180,18 @@ public class KeyPairResource extends AbstractParticipantResource {
 
         @Override
         public KeyPairResource build() {
+            super.build();
             Objects.requireNonNull(entity.id);
+            if (entity.usage == null || entity.usage.isEmpty()) {
+                throw new IllegalStateException("KeyPair must have at least one usage"); // backwards compatibility should be handled elsewhere
+            }
+            if (entity.timestamp <= 0) {
+                entity.timestamp = entity.clock.millis();
+            }
             if (entity.useDuration == 0) {
                 entity.useDuration = Duration.ofDays(6 * 30).toMillis();
             }
-            return super.build();
+            return entity;
         }
 
         public Builder timestamp(long timestamp) {
@@ -185,6 +204,7 @@ public class KeyPairResource extends AbstractParticipantResource {
             return this;
         }
 
+        @JsonProperty("defaultPair")
         public Builder isDefaultPair(boolean isDefaultPair) {
             entity.defaultPair = isDefaultPair;
             return this;
@@ -220,9 +240,21 @@ public class KeyPairResource extends AbstractParticipantResource {
             return this;
         }
 
+        public Builder usage(KeyPairUsage... usages) {
+            entity.usage = Set.of(usages);
+            return self();
+        }
+
+        @JsonSetter
+        public Builder usage(Set<KeyPairUsage> usages) {
+            entity.usage = usages;
+            return self();
+        }
+
         public Builder state(KeyPairState state) {
             entity.state = state.code();
             return this;
         }
+
     }
 }

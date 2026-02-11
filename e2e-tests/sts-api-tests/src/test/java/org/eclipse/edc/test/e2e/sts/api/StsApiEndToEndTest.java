@@ -40,7 +40,7 @@ import static com.nimbusds.jwt.JWTClaimNames.SUBJECT;
 import static io.restassured.RestAssured.given;
 import static io.restassured.http.ContentType.JSON;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.eclipse.edc.iam.identitytrust.spi.SelfIssuedTokenConstants.PRESENTATION_TOKEN_CLAIM;
+import static org.eclipse.edc.iam.decentralizedclaims.spi.SelfIssuedTokenConstants.PRESENTATION_TOKEN_CLAIM;
 import static org.eclipse.edc.jwt.spi.JwtRegisteredClaimNames.CLIENT_ID;
 import static org.eclipse.edc.util.io.Ports.getFreePort;
 import static org.hamcrest.Matchers.is;
@@ -69,7 +69,7 @@ public class StsApiEndToEndTest {
             var clientSecret = "super-secret-string";
             var expiresIn = 300;
 
-            var client = initClient(clientSecret, "public-key-id", "did:web:client");
+            var client = initClient(clientSecret, "key-alias", "did:web:client");
 
             var params = Map.of(
                     "client_id", client.getClientId(),
@@ -100,7 +100,7 @@ public class StsApiEndToEndTest {
             var bearerAccessScope = "org.test.Member:read org.test.GoldMember:read";
             var expiresIn = 300;
 
-            var client = initClient(clientSecret, "public-key-id", "did:web:client");
+            var client = initClient(clientSecret, "key-alias", "did:web:client");
 
 
             var params = Map.of(
@@ -140,7 +140,7 @@ public class StsApiEndToEndTest {
             var audience = "audience";
             var token = "test_token";
             var expiresIn = 300;
-            var client = initClient(clientSecret, "public-key-id", "did:web:client");
+            var client = initClient(clientSecret, "key-alias", "did:web:client");
 
 
             var params = Map.of(

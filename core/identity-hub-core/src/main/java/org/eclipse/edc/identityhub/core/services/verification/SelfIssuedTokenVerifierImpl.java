@@ -16,7 +16,7 @@ package org.eclipse.edc.identityhub.core.services.verification;
 
 import com.nimbusds.jwt.SignedJWT;
 import org.eclipse.edc.identityhub.publickey.KeyPairResourcePublicKeyResolver;
-import org.eclipse.edc.identityhub.spi.participantcontext.ParticipantContextService;
+import org.eclipse.edc.identityhub.spi.participantcontext.IdentityHubParticipantContextService;
 import org.eclipse.edc.identityhub.spi.verification.SelfIssuedTokenVerifier;
 import org.eclipse.edc.jwt.spi.JwtRegisteredClaimNames;
 import org.eclipse.edc.keys.spi.PublicKeyResolver;
@@ -51,13 +51,13 @@ public class SelfIssuedTokenVerifierImpl implements SelfIssuedTokenVerifier {
     private final KeyPairResourcePublicKeyResolver localPublicKeyService;
     private final TokenValidationRulesRegistry tokenValidationRulesRegistry;
     private final PublicKeyResolver publicKeyResolver;
-    private final ParticipantContextService participantContextService;
+    private final IdentityHubParticipantContextService participantContextService;
 
     public SelfIssuedTokenVerifierImpl(TokenValidationService tokenValidationService,
                                        KeyPairResourcePublicKeyResolver localPublicKeyService,
                                        TokenValidationRulesRegistry tokenValidationRulesRegistry,
                                        PublicKeyResolver publicKeyResolver,
-                                       ParticipantContextService participantContextService) {
+                                       IdentityHubParticipantContextService participantContextService) {
         this.tokenValidationService = tokenValidationService;
         this.localPublicKeyService = localPublicKeyService;
         this.tokenValidationRulesRegistry = tokenValidationRulesRegistry;
@@ -74,12 +74,12 @@ public class SelfIssuedTokenVerifierImpl implements SelfIssuedTokenVerifier {
         if (participantDidResult.failed()) {
             return Result.failure(participantDidResult.getFailureDetail());
         }
-        var pcDid = participantDidResult.getContent().getDid();
+        var participantDid = participantDidResult.getContent().getDid();
 
         var res = getKid(token).compose(kid -> {
             var rules = new ArrayList<>(tokenValidationRulesRegistry.getRules(DCP_PRESENTATION_SELF_ISSUED_TOKEN_CONTEXT));
             rules.add(new IssuerKeyIdValidationRule(kid));
-            rules.add(new AudienceValidationRule(pcDid));
+            rules.add(new AudienceValidationRule(participantDid));
             return tokenValidationService.validate(token, publicKeyResolver, rules);
         });
 
@@ -91,15 +91,15 @@ public class SelfIssuedTokenVerifierImpl implements SelfIssuedTokenVerifier {
         var accessTokenString = claimToken.getStringClaim(TOKEN_CLAIM);
         var subClaim = claimToken.getStringClaim(JwtRegisteredClaimNames.SUBJECT);
 
-        TokenValidationRule audMustMatchParticipantIdRule = (at, additional) -> {
+        TokenValidationRule audMustMatchParticipantDidRule = (at, additional) -> {
             var aud = at.getListClaim(JwtRegisteredClaimNames.AUDIENCE);
             if (aud == null || aud.isEmpty()) {
                 return Result.failure("Mandatory claim 'aud' on 'token' was null.");
             }
 
-            return aud.contains(pcDid) ?
+            return aud.contains(participantDid) ?
                     Result.success() :
-                    Result.failure("The DID associated with the Participant Context ID of this request ('%s') must match 'aud' claim in 'access_token' (%s).".formatted(pcDid, aud));
+                    Result.failure("The DID associated with the Participant Context ID of this request ('%s') must match 'aud' claim in 'access_token' (%s).".formatted(participantDid, aud));
         };
 
         TokenValidationRule subClaimsMatch = (at, additional) -> {
@@ -114,7 +114,7 @@ public class SelfIssuedTokenVerifierImpl implements SelfIssuedTokenVerifier {
         // verify the correctness of the 'access_token'
         var rules = new ArrayList<>(tokenValidationRulesRegistry.getRules(DCP_PRESENTATION_ACCESS_TOKEN_CONTEXT));
         rules.add(subClaimsMatch);
-        rules.add(audMustMatchParticipantIdRule);
+        rules.add(audMustMatchParticipantDidRule);
         // todo: verify that the resolved public key belongs to the participant ID
         var result = tokenValidationService.validate(accessTokenString, keyId -> localPublicKeyService.resolveKey(keyId, participantContextId), rules);
         if (result.failed()) {

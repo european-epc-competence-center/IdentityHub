@@ -15,8 +15,8 @@
 package org.eclipse.edc.issuerservice.api.admin.holder.v1.unstable;
 
 import io.restassured.specification.RequestSpecification;
+import org.eclipse.edc.api.auth.spi.AuthorizationService;
 import org.eclipse.edc.identityhub.api.Versions;
-import org.eclipse.edc.identityhub.spi.authorization.AuthorizationService;
 import org.eclipse.edc.issuerservice.api.admin.holder.v1.unstable.model.HolderDto;
 import org.eclipse.edc.issuerservice.spi.holder.HolderService;
 import org.eclipse.edc.issuerservice.spi.holder.model.Holder;
@@ -28,6 +28,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.Base64;
+import java.util.Map;
 import java.util.Set;
 
 import static io.restassured.RestAssured.given;
@@ -50,7 +51,7 @@ class IssuerHolderAdminApiControllerTest extends RestControllerTestBase {
 
     @BeforeEach
     void setUp() {
-        when(authorizationService.isAuthorized(any(), anyString(), any())).thenReturn(ServiceResult.success());
+        when(authorizationService.authorize(any(), anyString(), anyString(), any())).thenReturn(ServiceResult.success());
     }
 
     @Test
@@ -58,7 +59,7 @@ class IssuerHolderAdminApiControllerTest extends RestControllerTestBase {
         when(holderService.createHolder(any())).thenReturn(ServiceResult.success());
 
         baseRequest()
-                .body(new HolderDto("test-id", "did:web:test", "test name"))
+                .body(Map.of("holderId", "test-id", "did", "did:web:test", "name", "test name"))
                 .post()
                 .then()
                 .log().ifValidationFails()
@@ -72,7 +73,7 @@ class IssuerHolderAdminApiControllerTest extends RestControllerTestBase {
         when(holderService.createHolder(any())).thenReturn(ServiceResult.conflict("already exists"));
 
         baseRequest()
-                .body(new HolderDto("test-id", "did:web:test", "test name"))
+                .body(Map.of("holderId", "test-id", "did", "did:web:test", "name", "test name"))
                 .post()
                 .then()
                 .log().ifValidationFails()
@@ -85,7 +86,7 @@ class IssuerHolderAdminApiControllerTest extends RestControllerTestBase {
         when(holderService.updateHolder(any())).thenReturn(ServiceResult.success());
 
         baseRequest()
-                .body(new HolderDto("test-id", "did:web:test", "test name"))
+                .body(Map.of("holderId", "test-id", "did", "did:web:test", "name", "test name"))
                 .put()
                 .then()
                 .log().ifValidationFails()
@@ -98,7 +99,7 @@ class IssuerHolderAdminApiControllerTest extends RestControllerTestBase {
         when(holderService.updateHolder(any())).thenReturn(ServiceResult.notFound("not found"));
 
         baseRequest()
-                .body(new HolderDto("test-id", "did:web:test", "test name"))
+                .body(Map.of("holderId", "test-id", "did", "did:web:test", "name", "test name"))
                 .put()
                 .then()
                 .log().ifValidationFails()
@@ -165,6 +166,11 @@ class IssuerHolderAdminApiControllerTest extends RestControllerTestBase {
         assertThat(dto).isEmpty();
     }
 
+    @Override
+    protected Object controller() {
+        return new IssuerHolderAdminApiController(authorizationService, holderService);
+    }
+
     private Holder createHolder(String id, String did, String name) {
         return Holder.Builder.newInstance()
                 .participantContextId(PARTICIPANT_ID)
@@ -172,11 +178,6 @@ class IssuerHolderAdminApiControllerTest extends RestControllerTestBase {
                 .did(did)
                 .holderName(name)
                 .build();
-    }
-
-    @Override
-    protected Object controller() {
-        return new IssuerHolderAdminApiController(authorizationService, holderService);
     }
 
     private RequestSpecification baseRequest() {

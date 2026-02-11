@@ -11,8 +11,7 @@ dependencies {
     testImplementation(libs.restAssured)
     testImplementation(libs.awaitility)
     testImplementation(libs.mockserver.netty)
-
-
+    
     // needed for the Participant
     testImplementation(testFixtures(project(":spi:verifiable-credential-spi")))
     testImplementation(testFixtures(project(":e2e-tests:identityhub-test-fixtures")))
@@ -22,6 +21,7 @@ dependencies {
 
     testImplementation(project(":spi:sts-spi"))
     testImplementation(testFixtures(project(":e2e-tests:identityhub-test-fixtures")))
+    testImplementation(testFixtures(libs.edc.lib.oauth2.authn))
 
     testCompileOnly(project(":dist:bom:identityhub-bom"))
     testCompileOnly(project(":dist:bom:identityhub-feature-sql-bom"))

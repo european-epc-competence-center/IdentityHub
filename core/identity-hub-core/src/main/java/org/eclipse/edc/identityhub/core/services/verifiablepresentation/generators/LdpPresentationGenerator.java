@@ -20,8 +20,8 @@ import jakarta.json.Json;
 import jakarta.json.JsonArray;
 import jakarta.json.JsonArrayBuilder;
 import jakarta.json.JsonObject;
-import org.eclipse.edc.iam.identitytrust.spi.DcpConstants;
-import org.eclipse.edc.iam.identitytrust.spi.verification.SignatureSuiteRegistry;
+import org.eclipse.edc.iam.decentralizedclaims.spi.DcpConstants;
+import org.eclipse.edc.iam.decentralizedclaims.spi.verification.SignatureSuiteRegistry;
 import org.eclipse.edc.iam.verifiablecredentials.spi.VcConstants;
 import org.eclipse.edc.iam.verifiablecredentials.spi.model.CredentialFormat;
 import org.eclipse.edc.iam.verifiablecredentials.spi.model.VerifiableCredentialContainer;
@@ -45,7 +45,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
-import static org.eclipse.edc.iam.verifiablecredentials.spi.model.CredentialFormat.JSON_LD;
 import static org.eclipse.edc.iam.verifiablecredentials.spi.model.CredentialFormat.VC1_0_LD;
 import static org.eclipse.edc.identityhub.core.services.verifiablepresentation.generators.PresentationGeneratorConstants.CONTROLLER_ADDITIONAL_DATA;
 import static org.eclipse.edc.identityhub.core.services.verifiablepresentation.generators.PresentationGeneratorConstants.VERIFIABLE_CREDENTIAL_PROPERTY;
@@ -82,7 +81,7 @@ public class LdpPresentationGenerator implements PresentationGenerator<JsonObjec
 
     /**
      * Will always throw an {@link UnsupportedOperationException}.
-     * Please use {@link PresentationGenerator#generatePresentation(List, String, String, String, Map)} instead.
+     * Please use {@link PresentationGenerator#generatePresentation(String, List, String, String, String, Map)} instead.
      */
     @Override
     public JsonObject generatePresentation(List<VerifiableCredentialContainer> credentials, String privateKeyAlias, String privateKeyId) {
@@ -94,13 +93,14 @@ public class LdpPresentationGenerator implements PresentationGenerator<JsonObjec
      * Creates a presentation with the given credentials, key ID, and additional data. Note that JWT-VCs cannot be represented in LDP-VPs - while the spec would allow that
      * the JSON schema does not.
      *
-     * @param credentials     The list of Verifiable Credential Containers to include in the presentation.
-     * @param privateKeyAlias The alias of the private key to be used for generating the presentation.
-     * @param publicKeyId     The ID used by the counterparty to resolve the public key for verifying the VP.
-     * @param issuerId        The ID of this issuer. Usually a DID.
-     * @param additionalData  The additional data to be included in the presentation.
-     *                        It must contain a "types" field and optionally, a "suite" field to indicate the desired signature suite.
-     *                        If the "suite" parameter is specified, it must be a W3C identifier for signature suites.
+     * @param participantContextId The ID of the participant context for which the presentation is being generated.
+     * @param credentials          The list of Verifiable Credential Containers to include in the presentation.
+     * @param privateKeyAlias      The alias of the private key to be used for generating the presentation.
+     * @param publicKeyId          The ID used by the counterparty to resolve the public key for verifying the VP.
+     * @param issuerId             The ID of this issuer. Usually a DID.
+     * @param additionalData       The additional data to be included in the presentation.
+     *                             It must contain a "types" field and optionally, a "suite" field to indicate the desired signature suite.
+     *                             If the "suite" parameter is specified, it must be a W3C identifier for signature suites.
      * @return The created presentation as a JsonObject.
      * @throws IllegalArgumentException If the additional data does not contain "types",
      *                                  if no {@link SignatureSuite} is found for the provided suite identifier,
@@ -108,7 +108,7 @@ public class LdpPresentationGenerator implements PresentationGenerator<JsonObjec
      *                                  or if one or more VerifiableCredentials cannot be represented in the JSON-LD format.
      */
     @Override
-    public JsonObject generatePresentation(List<VerifiableCredentialContainer> credentials, String privateKeyAlias, String publicKeyId, String issuerId, Map<String, Object> additionalData) {
+    public JsonObject generatePresentation(String participantContextId, List<VerifiableCredentialContainer> credentials, String privateKeyAlias, String publicKeyId, String issuerId, Map<String, Object> additionalData) {
         if (!additionalData.containsKey(TYPE_ADDITIONAL_DATA)) {
             throw new IllegalArgumentException("Must provide additional data: '%s'".formatted(TYPE_ADDITIONAL_DATA));
         }
@@ -122,12 +122,12 @@ public class LdpPresentationGenerator implements PresentationGenerator<JsonObjec
             throw new IllegalArgumentException("No SignatureSuite for identifier '%s' was found.".formatted(suiteIdentifier));
         }
 
-        if (credentials.stream().anyMatch(c -> c.format() != JSON_LD && c.format() != CredentialFormat.VC1_0_LD)) {
-            throw new IllegalArgumentException("One or more VerifiableCredentials cannot be represented in the desired format %s/%s.".formatted(JSON_LD, VC1_0_LD));
+        if (credentials.stream().anyMatch(c -> c.format() != CredentialFormat.VC1_0_LD)) {
+            throw new IllegalArgumentException("One or more VerifiableCredentials cannot be represented in the desired format %s.".formatted(VC1_0_LD));
         }
 
         // check if private key can be resolved
-        var pk = privateKeyResolver.resolvePrivateKey(privateKeyAlias)
+        var pk = privateKeyResolver.resolvePrivateKey(participantContextId, privateKeyAlias)
                 .orElseThrow(f -> new IllegalArgumentException(f.getFailureDetail()));
 
         var types = (List) additionalData.get(TYPE_ADDITIONAL_DATA);

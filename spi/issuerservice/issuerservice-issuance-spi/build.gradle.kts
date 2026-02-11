@@ -23,8 +23,8 @@ dependencies {
     api(libs.edc.spi.vc)
     api(libs.edc.spi.validator)
     api(project(":spi:participant-context-spi"))
+    api(project(":spi:issuerservice:issuerservice-holder-spi"))
     testFixturesImplementation(libs.edc.junit)
-    testFixturesImplementation(libs.assertj)
     testFixturesImplementation(libs.awaitility)
     testFixturesImplementation(libs.junit.jupiter.api)
 }

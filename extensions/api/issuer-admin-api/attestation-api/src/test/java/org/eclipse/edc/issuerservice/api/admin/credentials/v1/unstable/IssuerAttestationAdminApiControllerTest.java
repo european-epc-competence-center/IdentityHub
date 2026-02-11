@@ -15,10 +15,11 @@
 package org.eclipse.edc.issuerservice.api.admin.credentials.v1.unstable;
 
 import io.restassured.specification.RequestSpecification;
+import org.eclipse.edc.api.auth.spi.AuthorizationService;
 import org.eclipse.edc.identityhub.api.Versions;
-import org.eclipse.edc.identityhub.spi.authorization.AuthorizationService;
 import org.eclipse.edc.issuerservice.spi.issuance.attestation.AttestationDefinitionService;
 import org.eclipse.edc.issuerservice.spi.issuance.model.AttestationDefinition;
+import org.eclipse.edc.junit.annotations.ApiTest;
 import org.eclipse.edc.spi.query.QuerySpec;
 import org.eclipse.edc.spi.result.ServiceResult;
 import org.eclipse.edc.web.jersey.testfixtures.RestControllerTestBase;
@@ -38,6 +39,7 @@ import static org.mockito.ArgumentMatchers.refEq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+@ApiTest
 class IssuerAttestationAdminApiControllerTest extends RestControllerTestBase {
 
     private static final String PARTICIPANT_ID = "test-participant";
@@ -47,13 +49,13 @@ class IssuerAttestationAdminApiControllerTest extends RestControllerTestBase {
 
     @BeforeEach
     void setUp() {
-        when(authorizationService.isAuthorized(any(), anyString(), any())).thenReturn(ServiceResult.success());
+        when(authorizationService.authorize(any(), anyString(), anyString(), any())).thenReturn(ServiceResult.success());
     }
 
     @Test
     void createAttestationDefinition_expect201() {
         var def = createAttestationDefinition("test-id", "test-type", Map.of());
-        when(attestationDefinitionService.createAttestation(refEq(def)))
+        when(attestationDefinitionService.createAttestation(refEq(def, "createdAt", "lastModifiedAt")))
                 .thenReturn(ServiceResult.success());
 
         baseRequest()
@@ -67,7 +69,7 @@ class IssuerAttestationAdminApiControllerTest extends RestControllerTestBase {
     @Test
     void createAttestationDefinition_whenExists_expectConflict() {
         var def = createAttestationDefinition("test-id", "test-type", Map.of());
-        when(attestationDefinitionService.createAttestation(refEq(def)))
+        when(attestationDefinitionService.createAttestation(refEq(def, "createdAt", "lastModifiedAt")))
                 .thenReturn(ServiceResult.conflict("foo"));
 
         baseRequest()
@@ -99,7 +101,7 @@ class IssuerAttestationAdminApiControllerTest extends RestControllerTestBase {
                 .then()
                 .statusCode(404);
     }
-    
+
     @Test
     void queryAttestationDefinitions() {
         var definitions = List.of(

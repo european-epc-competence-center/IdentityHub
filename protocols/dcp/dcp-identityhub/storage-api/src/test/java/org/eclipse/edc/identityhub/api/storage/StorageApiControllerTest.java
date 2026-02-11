@@ -21,8 +21,8 @@ import jakarta.json.JsonObject;
 import org.eclipse.edc.identityhub.protocols.dcp.spi.DcpIssuerTokenVerifier;
 import org.eclipse.edc.identityhub.protocols.dcp.spi.model.CredentialContainer;
 import org.eclipse.edc.identityhub.protocols.dcp.spi.model.CredentialMessage;
-import org.eclipse.edc.identityhub.spi.participantcontext.ParticipantContextService;
-import org.eclipse.edc.identityhub.spi.participantcontext.model.ParticipantContext;
+import org.eclipse.edc.identityhub.spi.participantcontext.IdentityHubParticipantContextService;
+import org.eclipse.edc.identityhub.spi.participantcontext.model.IdentityHubParticipantContext;
 import org.eclipse.edc.identityhub.spi.verifiablecredentials.generator.CredentialWriter;
 import org.eclipse.edc.jsonld.TitaniumJsonLd;
 import org.eclipse.edc.junit.annotations.ApiTest;
@@ -44,7 +44,7 @@ import java.util.Base64;
 import java.util.UUID;
 
 import static io.restassured.RestAssured.given;
-import static org.eclipse.edc.iam.identitytrust.spi.DcpConstants.DSPACE_DCP_NAMESPACE_V_1_0;
+import static org.eclipse.edc.iam.decentralizedclaims.spi.DcpConstants.DSPACE_DCP_NAMESPACE_V_1_0;
 import static org.eclipse.edc.identityhub.protocols.dcp.spi.DcpConstants.DCP_SCOPE_V_1_0;
 import static org.eclipse.edc.identityhub.verifiablecredentials.testfixtures.VerifiableCredentialTestUtil.buildSignedJwt;
 import static org.eclipse.edc.identityhub.verifiablecredentials.testfixtures.VerifiableCredentialTestUtil.generateEcKey;
@@ -68,7 +68,7 @@ class StorageApiControllerTest extends RestControllerTestBase {
     private final Monitor monitor = mock();
     private final CredentialWriter credentialWriter = mock();
     private final DcpIssuerTokenVerifier issuerTokenVerifier = mock();
-    private final ParticipantContextService participantContextService = mock();
+    private final IdentityHubParticipantContextService participantContextService = mock();
 
     @BeforeEach
     void setUp() {
@@ -220,8 +220,8 @@ class StorageApiControllerTest extends RestControllerTestBase {
         return ClaimToken.Builder.newInstance().build();
     }
 
-    private ParticipantContext participantContext() {
-        return ParticipantContext.Builder.newInstance()
+    private IdentityHubParticipantContext participantContext() {
+        return IdentityHubParticipantContext.Builder.newInstance()
                 .participantContextId("participantId")
                 .did("did:web:test")
                 .apiTokenAlias("alias")

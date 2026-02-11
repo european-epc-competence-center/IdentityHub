@@ -22,23 +22,25 @@ import com.nimbusds.jose.jwk.gen.ECKeyGenerator;
 import io.restassured.http.ContentType;
 import jakarta.json.Json;
 import jakarta.json.JsonObject;
+import org.eclipse.edc.iam.decentralizedclaims.sts.spi.store.StsAccountStore;
 import org.eclipse.edc.iam.did.spi.resolution.DidPublicKeyResolver;
-import org.eclipse.edc.iam.identitytrust.sts.spi.store.StsAccountStore;
 import org.eclipse.edc.iam.verifiablecredentials.spi.model.CredentialFormat;
 import org.eclipse.edc.iam.verifiablecredentials.spi.model.RevocationServiceRegistry;
 import org.eclipse.edc.identityhub.spi.credential.request.model.HolderCredentialRequest;
 import org.eclipse.edc.identityhub.spi.did.store.DidResourceStore;
 import org.eclipse.edc.identityhub.spi.keypair.store.KeyPairResourceStore;
-import org.eclipse.edc.identityhub.spi.participantcontext.ParticipantContextService;
+import org.eclipse.edc.identityhub.spi.participantcontext.IdentityHubParticipantContextService;
 import org.eclipse.edc.identityhub.spi.participantcontext.model.KeyDescriptor;
+import org.eclipse.edc.identityhub.spi.participantcontext.model.KeyPairUsage;
 import org.eclipse.edc.identityhub.spi.participantcontext.model.ParticipantManifest;
 import org.eclipse.edc.identityhub.spi.verifiablecredentials.model.VcStatus;
 import org.eclipse.edc.identityhub.spi.verifiablecredentials.store.CredentialStore;
-import org.eclipse.edc.identityhub.tests.fixtures.credentialservice.IdentityHubExtension;
-import org.eclipse.edc.identityhub.tests.fixtures.credentialservice.IdentityHubRuntime;
+import org.eclipse.edc.identityhub.tests.fixtures.DefaultRuntimes;
+import org.eclipse.edc.identityhub.tests.fixtures.credentialservice.IdentityHub;
 import org.eclipse.edc.jsonld.spi.JsonLdKeywords;
 import org.eclipse.edc.junit.annotations.EndToEndTest;
 import org.eclipse.edc.junit.annotations.PostgresqlIntegrationTest;
+import org.eclipse.edc.junit.extensions.ComponentRuntimeExtension;
 import org.eclipse.edc.junit.extensions.RuntimeExtension;
 import org.eclipse.edc.spi.query.QuerySpec;
 import org.eclipse.edc.spi.result.Result;
@@ -55,19 +57,17 @@ import org.junit.jupiter.api.extension.RegisterExtension;
 
 import java.util.Arrays;
 import java.util.Base64;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.eclipse.edc.iam.identitytrust.spi.DcpConstants.DSPACE_DCP_NAMESPACE_V_1_0;
+import static org.eclipse.edc.iam.decentralizedclaims.spi.DcpConstants.DSPACE_DCP_NAMESPACE_V_1_0;
 import static org.eclipse.edc.identityhub.protocols.dcp.spi.model.CredentialMessage.CREDENTIALS_TERM;
 import static org.eclipse.edc.identityhub.protocols.dcp.spi.model.CredentialMessage.HOLDER_PID_TERM;
 import static org.eclipse.edc.identityhub.protocols.dcp.spi.model.CredentialMessage.ISSUER_PID_TERM;
 import static org.eclipse.edc.identityhub.protocols.dcp.spi.model.CredentialMessage.STATUS_TERM;
 import static org.eclipse.edc.identityhub.spi.credential.request.model.HolderRequestState.CREATED;
 import static org.eclipse.edc.identityhub.spi.credential.request.model.HolderRequestState.REQUESTED;
-import static org.eclipse.edc.identityhub.tests.fixtures.TestData.IH_RUNTIME_ID;
-import static org.eclipse.edc.identityhub.tests.fixtures.TestData.IH_RUNTIME_MEM_MODULES;
 import static org.eclipse.edc.identityhub.tests.fixtures.TestData.IH_RUNTIME_NAME;
-import static org.eclipse.edc.identityhub.tests.fixtures.TestData.IH_RUNTIME_SQL_MODULES;
 import static org.eclipse.edc.identityhub.tests.fixtures.TestData.JWT_VC_EXAMPLE;
 import static org.eclipse.edc.identityhub.tests.fixtures.TestData.VC_EXAMPLE_2;
 import static org.eclipse.edc.identityhub.verifiablecredentials.testfixtures.JwtCreationUtil.CONSUMER_DID;
@@ -93,9 +93,9 @@ public class StorageApiEndToEndTest {
         private static final String TEST_PARTICIPANT_CONTEXT_ID_ENCODED = Base64.getUrlEncoder().encodeToString(TEST_PARTICIPANT_CONTEXT_ID.getBytes());
 
         @BeforeEach
-        void setup(IdentityHubRuntime identityHubRuntime) {
-            createParticipant(identityHubRuntime);
-            identityHubRuntime.storeHolderRequest(HolderCredentialRequest.Builder.newInstance()
+        void setup(IdentityHub identityHub) {
+            createParticipant(identityHub);
+            identityHub.storeHolderRequest(HolderCredentialRequest.Builder.newInstance()
                     .id("test-holder-id")
                     .issuerDid(PROVIDER_DID)
                     .participantContextId(TEST_PARTICIPANT_CONTEXT_ID)
@@ -107,7 +107,7 @@ public class StorageApiEndToEndTest {
         }
 
         @AfterEach
-        void teardown(ParticipantContextService contextService, DidResourceStore didResourceStore, KeyPairResourceStore keyPairResourceStore, CredentialStore store, StsAccountStore accountStore) {
+        void teardown(IdentityHubParticipantContextService contextService, DidResourceStore didResourceStore, KeyPairResourceStore keyPairResourceStore, CredentialStore store, StsAccountStore accountStore) {
             // purge all participant contexts
 
             contextService.query(QuerySpec.max()).getContent()
@@ -129,11 +129,11 @@ public class StorageApiEndToEndTest {
 
         @DisplayName("Store JWT credential successfully")
         @Test
-        void storeCredential(IdentityHubRuntime identityHubRuntime, CredentialStore credentialStore) throws JOSEException {
+        void storeCredential(IdentityHub identityHub, CredentialStore credentialStore) throws JOSEException {
 
             when(DID_PUBLIC_KEY_RESOLVER.resolveKey(eq(PROVIDER_DID + "#key1"))).thenReturn(Result.success(PROVIDER_KEY.toPublicKey()));
             var credentialMessage = createCredentialMessage(createCredentialContainer());
-            identityHubRuntime.getCredentialsEndpoint().baseRequest()
+            identityHub.getCredentialsEndpoint().baseRequest()
                     .contentType(ContentType.JSON)
                     .header("Authorization", "Bearer " + generateSiToken())
                     .body(credentialMessage)
@@ -149,10 +149,10 @@ public class StorageApiEndToEndTest {
 
         @DisplayName("Issuer's DID not resolvable, expect HTTP 401")
         @Test
-        void storeCredential_didNotResolved(IdentityHubRuntime identityHubRuntime) {
+        void storeCredential_didNotResolved(IdentityHub identityHub) {
             when(DID_PUBLIC_KEY_RESOLVER.resolveKey(eq(PROVIDER_DID + "#key1"))).thenReturn(Result.failure("not found"));
             var credentialMessage = createCredentialMessage(createCredentialContainer());
-            identityHubRuntime.getCredentialsEndpoint().baseRequest()
+            identityHub.getCredentialsEndpoint().baseRequest()
                     .contentType(ContentType.JSON)
                     .header("Authorization", "Bearer " + generateSiToken())
                     .body(credentialMessage)
@@ -166,12 +166,12 @@ public class StorageApiEndToEndTest {
 
         @DisplayName("Issuer's auth token invalid, expect HTTP 401")
         @Test
-        void storeCredential_tokenSignedWithWrongKey(IdentityHubRuntime identityHubRuntime) throws JOSEException {
+        void storeCredential_tokenSignedWithWrongKey(IdentityHub identityHub) throws JOSEException {
             var wrongKey = new ECKeyGenerator(Curve.P_256).generate();
             when(DID_PUBLIC_KEY_RESOLVER.resolveKey(eq(PROVIDER_DID + "#key1"))).thenReturn(Result.success(wrongKey.toPublicKey()));
 
             var credentialMessage = createCredentialMessage(createCredentialContainer());
-            identityHubRuntime.getCredentialsEndpoint().baseRequest()
+            identityHub.getCredentialsEndpoint().baseRequest()
                     .contentType(ContentType.JSON)
                     .header("Authorization", "Bearer " + generateSiToken(CONSUMER_DID, PROVIDER_DID))
                     .body(credentialMessage)
@@ -184,7 +184,7 @@ public class StorageApiEndToEndTest {
 
         @DisplayName("CredentialMessage contains an illegal format, expect HTTP 400")
         @Test
-        void storeCredential_wrongCredentialFormat(IdentityHubRuntime identityHubRuntime) throws JOSEException {
+        void storeCredential_wrongCredentialFormat(IdentityHub identityHub) throws JOSEException {
             when(DID_PUBLIC_KEY_RESOLVER.resolveKey(eq(PROVIDER_DID + "#key1"))).thenReturn(Result.success(PROVIDER_KEY.toPublicKey()));
 
             var credentialContainer = Json.createObjectBuilder()
@@ -194,7 +194,7 @@ public class StorageApiEndToEndTest {
                     .build();
 
             var credentialMessage = createCredentialMessage(credentialContainer);
-            identityHubRuntime.getCredentialsEndpoint().baseRequest()
+            identityHub.getCredentialsEndpoint().baseRequest()
                     .contentType(ContentType.JSON)
                     .header("Authorization", "Bearer " + generateSiToken())
                     .body(credentialMessage)
@@ -207,7 +207,7 @@ public class StorageApiEndToEndTest {
 
         @DisplayName("Store LD credential successfully")
         @Test
-        void storeCredential_jsonLdCredential(IdentityHubRuntime identityHubRuntime, CredentialStore credentialStore) throws JOSEException {
+        void storeCredential_jsonLdCredential(IdentityHub identityHub, CredentialStore credentialStore) throws JOSEException {
             when(DID_PUBLIC_KEY_RESOLVER.resolveKey(eq(PROVIDER_DID + "#key1"))).thenReturn(Result.success(PROVIDER_KEY.toPublicKey()));
 
             var credentialContainer = Json.createObjectBuilder()
@@ -217,7 +217,7 @@ public class StorageApiEndToEndTest {
                     .build();
 
             var credentialMessage = createCredentialMessage(credentialContainer);
-            identityHubRuntime.getCredentialsEndpoint().baseRequest()
+            identityHub.getCredentialsEndpoint().baseRequest()
                     .contentType(ContentType.JSON)
                     .header("Authorization", "Bearer " + generateSiToken())
                     .body(credentialMessage)
@@ -233,11 +233,11 @@ public class StorageApiEndToEndTest {
 
         @DisplayName("No corresponding holder credential request was found, expect HTTP 404")
         @Test
-        void storeCredential_whenNoCredentialRequest(IdentityHubRuntime identityHubRuntime) throws JOSEException {
+        void storeCredential_whenNoCredentialRequest(IdentityHub identityHub) throws JOSEException {
             when(DID_PUBLIC_KEY_RESOLVER.resolveKey(eq(PROVIDER_DID + "#key1"))).thenReturn(Result.success(PROVIDER_KEY.toPublicKey()));
             var credentialMessage = createCredentialMessage("another_holder_pid", createCredentialContainer());
 
-            identityHubRuntime.getCredentialsEndpoint().baseRequest()
+            identityHub.getCredentialsEndpoint().baseRequest()
                     .contentType(ContentType.JSON)
                     .header("Authorization", "Bearer " + generateSiToken())
                     .body(credentialMessage)
@@ -249,9 +249,9 @@ public class StorageApiEndToEndTest {
 
         @DisplayName("Corresponding holder credential request is not in state REQUESTED, expect 400")
         @Test
-        void storeCredential_whenCredentialRequestInWrongState(IdentityHubRuntime identityHubRuntime) throws JOSEException {
+        void storeCredential_whenCredentialRequestInWrongState(IdentityHub identityHub) throws JOSEException {
 
-            identityHubRuntime.storeHolderRequest(HolderCredentialRequest.Builder.newInstance()
+            identityHub.storeHolderRequest(HolderCredentialRequest.Builder.newInstance()
                     .id("test-holder-id")
                     .issuerDid(PROVIDER_DID)
                     .participantContextId(TEST_PARTICIPANT_CONTEXT_ID)
@@ -263,7 +263,7 @@ public class StorageApiEndToEndTest {
             when(DID_PUBLIC_KEY_RESOLVER.resolveKey(eq(PROVIDER_DID + "#key1"))).thenReturn(Result.success(PROVIDER_KEY.toPublicKey()));
             var credentialMessage = createCredentialMessage(createCredentialContainer());
 
-            identityHubRuntime.getCredentialsEndpoint().baseRequest()
+            identityHub.getCredentialsEndpoint().baseRequest()
                     .contentType(ContentType.JSON)
                     .header("Authorization", "Bearer " + generateSiToken())
                     .body(credentialMessage)
@@ -276,9 +276,9 @@ public class StorageApiEndToEndTest {
 
         @DisplayName("Corresponding holder credential request was made for a different credential format, expect 400")
         @Test
-        void storeCredential_whenFormatNotRequested(IdentityHubRuntime identityHubRuntime) throws JOSEException {
+        void storeCredential_whenFormatNotRequested(IdentityHub identityHub) throws JOSEException {
 
-            identityHubRuntime.storeHolderRequest(HolderCredentialRequest.Builder.newInstance()
+            identityHub.storeHolderRequest(HolderCredentialRequest.Builder.newInstance()
                     .id("test-holder-id")
                     .issuerDid(PROVIDER_DID)
                     .participantContextId(TEST_PARTICIPANT_CONTEXT_ID)
@@ -290,7 +290,7 @@ public class StorageApiEndToEndTest {
             when(DID_PUBLIC_KEY_RESOLVER.resolveKey(eq(PROVIDER_DID + "#key1"))).thenReturn(Result.success(PROVIDER_KEY.toPublicKey()));
             var credentialMessage = createCredentialMessage(createCredentialContainer());
 
-            identityHubRuntime.getCredentialsEndpoint().baseRequest()
+            identityHub.getCredentialsEndpoint().baseRequest()
                     .contentType(ContentType.JSON)
                     .header("Authorization", "Bearer " + generateSiToken())
                     .body(credentialMessage)
@@ -301,21 +301,22 @@ public class StorageApiEndToEndTest {
                     .body(containsString("No credential request was made for Credentials "));
         }
 
-        private void createParticipant(IdentityHubRuntime identityHubRuntime) {
-            createParticipant(identityHubRuntime, TEST_PARTICIPANT_CONTEXT_ID, CONSUMER_KEY);
+        private void createParticipant(IdentityHub identityHub) {
+            createParticipant(identityHub, TEST_PARTICIPANT_CONTEXT_ID, CONSUMER_KEY);
         }
 
-        private void createParticipant(IdentityHubRuntime identityHubRuntime, String participantContextId, ECKey participantKey) {
-            var service = identityHubRuntime.getService(ParticipantContextService.class);
-            var vault = identityHubRuntime.getService(Vault.class);
+        private void createParticipant(IdentityHub identityHub, String participantContextId, ECKey participantKey) {
+            var service = identityHub.getService(IdentityHubParticipantContextService.class);
+            var vault = identityHub.getService(Vault.class);
 
             var privateKeyAlias = "%s-privatekey-alias".formatted(participantContextId);
             vault.storeSecret(privateKeyAlias, participantKey.toJSONString());
             var manifest = ParticipantManifest.Builder.newInstance()
-                    .participantId(participantContextId)
+                    .participantContextId(participantContextId)
                     .did("did:web:%s".formatted(participantContextId.replace("did:web:", "")))
                     .active(true)
                     .key(KeyDescriptor.Builder.newInstance()
+                            .usage(Set.of(KeyPairUsage.PRESENTATION_SIGNING))
                             .publicKeyJwk(participantKey.toPublicJWK().toJSONObject())
                             .privateKeyAlias(privateKeyAlias)
                             .keyId(participantKey.getKeyID())
@@ -360,10 +361,12 @@ public class StorageApiEndToEndTest {
     class InMemory extends Tests {
 
         @RegisterExtension
-        static final RuntimeExtension IDENTITY_HUB_EXTENSION = IdentityHubExtension.Builder.newInstance()
+        static final RuntimeExtension IDENTITY_HUB_EXTENSION = ComponentRuntimeExtension.Builder.newInstance()
                 .name(IH_RUNTIME_NAME)
-                .id(IH_RUNTIME_ID)
-                .modules(IH_RUNTIME_MEM_MODULES)
+                .modules(DefaultRuntimes.IdentityHub.MODULES)
+                .endpoints(DefaultRuntimes.IdentityHub.ENDPOINTS.build())
+                .configurationProvider(DefaultRuntimes.IdentityHub::config)
+                .paramProvider(IdentityHub.class, IdentityHub::forContext)
                 .build()
                 .registerServiceMock(DidPublicKeyResolver.class, DID_PUBLIC_KEY_RESOLVER)
                 .registerServiceMock(RevocationServiceRegistry.class, REVOCATION_LIST_REGISTRY);
@@ -387,11 +390,13 @@ public class StorageApiEndToEndTest {
 
         @Order(2)
         @RegisterExtension
-        static final RuntimeExtension IDENTITY_HUB_EXTENSION = IdentityHubExtension.Builder.newInstance()
+        static final RuntimeExtension IDENTITY_HUB_EXTENSION = ComponentRuntimeExtension.Builder.newInstance()
                 .name(IH_RUNTIME_NAME)
-                .id(IH_RUNTIME_ID)
-                .modules(IH_RUNTIME_SQL_MODULES)
+                .modules(DefaultRuntimes.IdentityHub.SQL_MODULES)
+                .endpoints(DefaultRuntimes.IdentityHub.ENDPOINTS.build())
+                .configurationProvider(DefaultRuntimes.IdentityHub::config)
                 .configurationProvider(() -> POSTGRESQL_EXTENSION.configFor(DB_NAME))
+                .paramProvider(IdentityHub.class, IdentityHub::forContext)
                 .build()
                 .registerServiceMock(DidPublicKeyResolver.class, DID_PUBLIC_KEY_RESOLVER)
                 .registerServiceMock(RevocationServiceRegistry.class, REVOCATION_LIST_REGISTRY);

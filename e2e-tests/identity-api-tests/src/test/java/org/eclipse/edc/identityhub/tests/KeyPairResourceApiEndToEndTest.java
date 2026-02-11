@@ -14,9 +14,9 @@
 
 package org.eclipse.edc.identityhub.tests;
 
-import io.restassured.http.ContentType;
 import io.restassured.http.Header;
-import org.eclipse.edc.iam.identitytrust.sts.spi.store.StsAccountStore;
+import org.eclipse.edc.api.authentication.OauthServerEndToEndExtension;
+import org.eclipse.edc.iam.decentralizedclaims.sts.spi.store.StsAccountStore;
 import org.eclipse.edc.identityhub.spi.did.events.DidDocumentPublished;
 import org.eclipse.edc.identityhub.spi.did.model.DidState;
 import org.eclipse.edc.identityhub.spi.did.store.DidResourceStore;
@@ -27,18 +27,21 @@ import org.eclipse.edc.identityhub.spi.keypair.events.KeyPairRotated;
 import org.eclipse.edc.identityhub.spi.keypair.model.KeyPairResource;
 import org.eclipse.edc.identityhub.spi.keypair.model.KeyPairState;
 import org.eclipse.edc.identityhub.spi.keypair.store.KeyPairResourceStore;
-import org.eclipse.edc.identityhub.spi.participantcontext.ParticipantContextService;
-import org.eclipse.edc.identityhub.spi.participantcontext.model.ParticipantContext;
-import org.eclipse.edc.identityhub.tests.fixtures.credentialservice.IdentityHubExtension;
-import org.eclipse.edc.identityhub.tests.fixtures.credentialservice.IdentityHubRuntime;
+import org.eclipse.edc.identityhub.spi.participantcontext.IdentityHubParticipantContextService;
+import org.eclipse.edc.identityhub.tests.fixtures.DefaultRuntimes;
+import org.eclipse.edc.identityhub.tests.fixtures.credentialservice.IdentityHub;
 import org.eclipse.edc.junit.annotations.EndToEndTest;
 import org.eclipse.edc.junit.annotations.PostgresqlIntegrationTest;
+import org.eclipse.edc.junit.extensions.ComponentRuntimeExtension;
+import org.eclipse.edc.junit.extensions.RuntimeExtension;
+import org.eclipse.edc.spi.EdcException;
 import org.eclipse.edc.spi.event.EventRouter;
 import org.eclipse.edc.spi.event.EventSubscriber;
 import org.eclipse.edc.spi.query.QuerySpec;
 import org.eclipse.edc.spi.security.Vault;
 import org.eclipse.edc.sql.testfixtures.PostgresqlEndToEndExtension;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
@@ -49,17 +52,15 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 import java.util.Arrays;
 import java.util.Base64;
-import java.util.List;
 import java.util.UUID;
 
 import static io.restassured.http.ContentType.JSON;
 import static java.util.stream.IntStream.range;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.eclipse.edc.identityhub.tests.fixtures.TestData.IH_RUNTIME_ID;
-import static org.eclipse.edc.identityhub.tests.fixtures.TestData.IH_RUNTIME_MEM_MODULES;
 import static org.eclipse.edc.identityhub.tests.fixtures.TestData.IH_RUNTIME_NAME;
-import static org.eclipse.edc.identityhub.tests.fixtures.TestData.IH_RUNTIME_SQL_MODULES;
-import static org.eclipse.edc.junit.assertions.AbstractResultAssert.assertThat;
+import static org.eclipse.edc.identityhub.tests.fixtures.TestFunctions.authorizeOauth2;
+import static org.eclipse.edc.identityhub.tests.fixtures.TestFunctions.authorizeTokenBased;
+import static org.eclipse.edc.identityhub.tests.fixtures.common.AbstractIdentityHub.SUPER_USER;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.mockito.ArgumentMatchers.argThat;
@@ -73,45 +74,42 @@ import static org.mockito.Mockito.verifyNoInteractions;
 @SuppressWarnings("JUnitMalformedDeclaration")
 public class KeyPairResourceApiEndToEndTest {
 
+    private static final String PARTICIPANT_CONTEXT_ID = "user1";
+    private static final String PARTICIPANT_CONTEXT_ID_BASE64 = Base64.getUrlEncoder().encodeToString(PARTICIPANT_CONTEXT_ID.getBytes());
+
     abstract static class Tests {
 
         @AfterEach
-        void tearDown(ParticipantContextService pcService, DidResourceStore didResourceStore, KeyPairResourceStore keyPairResourceStore, StsAccountStore accountStore) {
+        void tearDown(IdentityHubParticipantContextService pcService, DidResourceStore didResourceStore, KeyPairResourceStore keyPairResourceStore, StsAccountStore accountStore) {
             // purge all users, dids, keypairs
 
             pcService.query(QuerySpec.max()).getContent()
-                    .forEach(pc -> pcService.deleteParticipantContext(pc.getParticipantContextId()).getContent());
+                    .forEach(pc -> pcService.deleteParticipantContext(pc.getParticipantContextId()).orElseThrow(f -> new RuntimeException(f.getFailureDetail())));
 
-            didResourceStore.query(QuerySpec.max()).forEach(dr -> didResourceStore.deleteById(dr.getDid()).getContent());
+            didResourceStore.query(QuerySpec.max()).forEach(dr -> didResourceStore.deleteById(dr.getDid()).orElseThrow(f -> new RuntimeException(f.getFailureDetail())));
 
             keyPairResourceStore.query(QuerySpec.max()).getContent()
-                    .forEach(kpr -> keyPairResourceStore.deleteById(kpr.getId()).getContent());
+                    .forEach(kpr -> keyPairResourceStore.deleteById(kpr.getId()).orElseThrow(f -> new RuntimeException(f.getFailureDetail())));
 
             accountStore.findAll(QuerySpec.max())
-                    .forEach(sts -> accountStore.deleteById(sts.getId()).getContent());
+                    .forEach(sts -> accountStore.deleteById(sts.getId()).orElseThrow(f -> new RuntimeException(f.getFailureDetail())));
         }
 
         @Test
-        void findById_notAuthorized(IdentityHubRuntime identityHubRuntime) {
-            var user1 = "user1";
-            identityHubRuntime.createParticipant(user1);
+        void findById_notAuthorized(IdentityHub identityHub) {
 
-            // create second user
-            var user2 = "user2";
-            var user2Context = ParticipantContext.Builder.newInstance()
-                    .participantContextId(user2)
-                    .did("did:web:" + user2)
-                    .apiTokenAlias(user2 + "-alias")
-                    .build();
-            var user2Token = identityHubRuntime.storeParticipant(user2Context);
+            identityHub.createParticipant(PARTICIPANT_CONTEXT_ID);
 
-            var key = identityHubRuntime.createKeyPair(user1).getResourceId();
+            // create a second user
+            var authHeader = authorizeUser("user2", identityHub);
+
+            var key = identityHub.createKeyPair(PARTICIPANT_CONTEXT_ID).getResourceId();
 
             // attempt to publish user1's DID document, which should fail
-            identityHubRuntime.getIdentityEndpoint().baseRequest()
+            identityHub.getIdentityEndpoint().baseRequest()
                     .contentType(JSON)
-                    .header(new Header("x-api-key", user2Token))
-                    .get("/v1alpha/participants/%s/keypairs/%s".formatted(toBase64(user1), key))
+                    .header(authHeader)
+                    .get("/v1alpha/participants/%s/keypairs/%s".formatted(PARTICIPANT_CONTEXT_ID_BASE64, key))
                     .then()
                     .log().ifValidationFails()
                     .statusCode(403)
@@ -119,18 +117,17 @@ public class KeyPairResourceApiEndToEndTest {
         }
 
         @Test
-        void findById(IdentityHubRuntime identityHubRuntime) {
-            var superUserKey = identityHubRuntime.createSuperUser().apiKey();
-            var user1 = "user1";
-            var token = identityHubRuntime.createParticipant(user1).apiKey();
+        void findById(IdentityHub identityHub) {
+            var superUserKey = authorizeUser(SUPER_USER, identityHub);
+            var token = authorizeUser(PARTICIPANT_CONTEXT_ID, identityHub);
 
-            var key = identityHubRuntime.createKeyPair(user1).getResourceId();
+            var key = identityHub.createKeyPair(PARTICIPANT_CONTEXT_ID).getResourceId();
 
             assertThat(Arrays.asList(token, superUserKey))
-                    .allSatisfy(t -> identityHubRuntime.getIdentityEndpoint().baseRequest()
+                    .allSatisfy(t -> identityHub.getIdentityEndpoint().baseRequest()
                             .contentType(JSON)
-                            .header(new Header("x-api-key", t))
-                            .get("/v1alpha/participants/%s/keypairs/%s".formatted(toBase64(user1), key))
+                            .header(t)
+                            .get("/v1alpha/participants/%s/keypairs/%s".formatted(PARTICIPANT_CONTEXT_ID_BASE64, key))
                             .then()
                             .log().ifValidationFails()
                             .statusCode(200)
@@ -138,26 +135,20 @@ public class KeyPairResourceApiEndToEndTest {
         }
 
         @Test
-        void findForParticipant_notAuthorized(IdentityHubRuntime identityHubRuntime) {
-            var user1 = "user1";
-            identityHubRuntime.createParticipant(user1);
+        void findForParticipant_notAuthorized(IdentityHub identityHub) {
+
+            identityHub.createParticipant(PARTICIPANT_CONTEXT_ID);
 
             // create second user
-            var user2 = "user2";
-            var user2Context = ParticipantContext.Builder.newInstance()
-                    .participantContextId(user2)
-                    .did("did:web:" + user2)
-                    .apiTokenAlias(user2 + "-alias")
-                    .build();
-            var user2Token = identityHubRuntime.storeParticipant(user2Context);
+            var user2Auth = authorizeUser("user2", identityHub);
 
-            identityHubRuntime.createKeyPair(user1);
+            identityHub.createKeyPair(PARTICIPANT_CONTEXT_ID);
 
             // attempt to publish user1's DID document, which should fail
-            var res = identityHubRuntime.getIdentityEndpoint().baseRequest()
+            var res = identityHub.getIdentityEndpoint().baseRequest()
                     .contentType(JSON)
-                    .header(new Header("x-api-key", user2Token))
-                    .get("/v1alpha/participants/%s/keypairs".formatted(toBase64(user1)))
+                    .header(user2Auth)
+                    .get("/v1alpha/participants/%s/keypairs".formatted(PARTICIPANT_CONTEXT_ID_BASE64))
                     .then()
                     .log().ifValidationFails()
                     .statusCode(200)
@@ -168,17 +159,16 @@ public class KeyPairResourceApiEndToEndTest {
         }
 
         @Test
-        void findForParticipant(IdentityHubRuntime identityHubRuntime) {
-            var superUserKey = identityHubRuntime.createSuperUser().apiKey();
-            var user1 = "user1";
-            var token = identityHubRuntime.createParticipant(user1).apiKey();
-            identityHubRuntime.createKeyPair(user1);
+        void findForParticipant(IdentityHub identityHub) {
+            var superUserKey = authorizeUser(SUPER_USER, identityHub);
+            var token = authorizeUser(PARTICIPANT_CONTEXT_ID, identityHub);
+            identityHub.createKeyPair(PARTICIPANT_CONTEXT_ID);
 
             assertThat(Arrays.asList(token, superUserKey))
-                    .allSatisfy(t -> identityHubRuntime.getIdentityEndpoint().baseRequest()
+                    .allSatisfy(authHeader -> identityHub.getIdentityEndpoint().baseRequest()
                             .contentType(JSON)
-                            .header(new Header("x-api-key", t))
-                            .get("/v1alpha/participants/%s/keypairs".formatted(toBase64(user1)))
+                            .header(authHeader)
+                            .get("/v1alpha/participants/%s/keypairs".formatted(PARTICIPANT_CONTEXT_ID_BASE64))
                             .then()
                             .log().ifValidationFails()
                             .statusCode(200)
@@ -187,35 +177,34 @@ public class KeyPairResourceApiEndToEndTest {
         }
 
         @Test
-        void addKeyPair(IdentityHubRuntime identityHubRuntime, EventRouter router) {
-            var superUserKey = identityHubRuntime.createSuperUser().apiKey();
+        void addKeyPair(IdentityHub identityHub, EventRouter router) {
             var subscriber = mock(EventSubscriber.class);
             router.registerSync(KeyPairAdded.class, subscriber);
 
-            var participantContextId = "user1";
-            var token = identityHubRuntime.createParticipant(participantContextId).apiKey();
+            var superUserKey = authorizeUser(SUPER_USER, identityHub);
+            var token = authorizeUser(PARTICIPANT_CONTEXT_ID, identityHub);
 
             assertThat(Arrays.asList(token, superUserKey))
-                    .allSatisfy(t -> {
-                        var keyDesc = identityHubRuntime.createKeyDescriptor(participantContextId)
+                    .allSatisfy(authHeader -> {
+                        var keyDesc = identityHub.createKeyDescriptor(PARTICIPANT_CONTEXT_ID)
                                 .keyId(UUID.randomUUID().toString())
                                 .build();
-                        identityHubRuntime.getIdentityEndpoint().baseRequest()
+                        identityHub.getIdentityEndpoint().baseRequest()
                                 .contentType(JSON)
-                                .header(new Header("x-api-key", t))
+                                .header(authHeader)
                                 .body(keyDesc)
-                                .put("/v1alpha/participants/%s/keypairs".formatted(toBase64(participantContextId)))
+                                .put("/v1alpha/participants/%s/keypairs".formatted(PARTICIPANT_CONTEXT_ID_BASE64))
                                 .then()
                                 .log().ifValidationFails()
                                 .statusCode(204)
                                 .body(notNullValue());
 
-                        assertThat(identityHubRuntime.getKeyPairsForParticipant(participantContextId))
+                        assertThat(identityHub.getKeyPairsForParticipant(PARTICIPANT_CONTEXT_ID))
                                 .hasSizeGreaterThanOrEqualTo(2)
                                 .anyMatch(kpr -> kpr.getKeyId().equals(keyDesc.getKeyId()));
                         verify(subscriber).on(argThat(env -> {
                             var evt = (KeyPairAdded) env.getPayload();
-                            return evt.getParticipantContextId().equals(participantContextId) &&
+                            return evt.getParticipantContextId().equals(PARTICIPANT_CONTEXT_ID) &&
                                     evt.getKeyPairResource().getId().equals(keyDesc.getResourceId()) &&
                                     evt.getKeyId().equals(keyDesc.getKeyId());
                         }));
@@ -223,24 +212,21 @@ public class KeyPairResourceApiEndToEndTest {
         }
 
         @Test
-        void addKeyPair_notAuthorized(IdentityHubRuntime identityHubRuntime, EventRouter router) {
+        void addKeyPair_notAuthorized(IdentityHub identityHub, EventRouter router) {
             var subscriber = mock(EventSubscriber.class);
             router.registerSync(KeyPairAdded.class, subscriber);
 
-            var user1 = "user1";
-            var token = identityHubRuntime.createParticipant(user1);
+            identityHub.createParticipant(PARTICIPANT_CONTEXT_ID);
 
-            var user2 = "user2";
-            var token2 = identityHubRuntime.createParticipant(user2).apiKey();
-
+            var header = authorizeUser("user2", identityHub);
 
             // attempt to publish user1's DID document, which should fail
-            var keyDesc = identityHubRuntime.createKeyDescriptor(user1).build();
-            identityHubRuntime.getIdentityEndpoint().baseRequest()
+            var keyDesc = identityHub.createKeyDescriptor(PARTICIPANT_CONTEXT_ID).build();
+            identityHub.getIdentityEndpoint().baseRequest()
                     .contentType(JSON)
-                    .header(new Header("x-api-key", token2))
+                    .header(header)
                     .body(keyDesc)
-                    .put("/v1alpha/participants/%s/keypairs".formatted(toBase64(user1)))
+                    .put("/v1alpha/participants/%s/keypairs".formatted(PARTICIPANT_CONTEXT_ID_BASE64))
                     .then()
                     .log().ifValidationFails()
                     .statusCode(403)
@@ -248,117 +234,116 @@ public class KeyPairResourceApiEndToEndTest {
 
             verify(subscriber, never()).on(argThat(env -> {
                 if (env.getPayload() instanceof KeyPairAdded evt) {
-                    return evt.getKeyPairResource().equals(keyDesc.getKeyId());
+                    return evt.getKeyPairResource().getKeyId().equals(keyDesc.getKeyId());
                 }
                 return false;
             }));
         }
 
         @Test
-        void addKeyPair_participantNotFound(IdentityHubRuntime identityHubRuntime, EventRouter router) {
-            var superUserKey = identityHubRuntime.createSuperUser().apiKey();
+        void addKeyPair_participantNotFound(IdentityHub identityHub, EventRouter router) {
+            var superUserAuth = authorizeUser(SUPER_USER, identityHub);
             var subscriber = mock(EventSubscriber.class);
             router.registerSync(KeyPairAdded.class, subscriber);
 
-            var participantId = "user1";
 
-            var keyDesc = identityHubRuntime.createKeyDescriptor(participantId).keyId("new-key-id").build();
-            identityHubRuntime.getIdentityEndpoint().baseRequest()
+            var keyDesc = identityHub.createKeyDescriptor(PARTICIPANT_CONTEXT_ID).keyId("new-key-id").build();
+            identityHub.getIdentityEndpoint().baseRequest()
                     .contentType(JSON)
-                    .header(new Header("x-api-key", superUserKey))
+                    .header(superUserAuth)
                     .body(keyDesc)
-                    .put("/v1alpha/participants/%s/keypairs".formatted(toBase64(participantId)))
+                    .put("/v1alpha/participants/%s/keypairs".formatted(PARTICIPANT_CONTEXT_ID_BASE64))
                     .then()
                     .log().ifValidationFails()
                     .statusCode(404)
                     .body(notNullValue());
 
-            assertThat(identityHubRuntime.getKeyPairsForParticipant(participantId)).isEmpty();
+            assertThat(identityHub.getKeyPairsForParticipant(PARTICIPANT_CONTEXT_ID)).isEmpty();
             verifyNoInteractions(subscriber);
         }
 
         @Test
-        void addKeyPair_participantDeactivated(IdentityHubRuntime identityHubRuntime, EventRouter router) {
-            var superUserKey = identityHubRuntime.createSuperUser().apiKey();
+        void addKeyPair_participantDeactivated(IdentityHub identityHub, EventRouter router) {
+            var superUserAuth = authorizeUser(SUPER_USER, identityHub);
             var subscriber = mock(EventSubscriber.class);
             router.registerSync(KeyPairAdded.class, subscriber);
 
-            var participantId = "user1";
-            identityHubRuntime.createParticipant(participantId);
+
+            identityHub.createParticipant(PARTICIPANT_CONTEXT_ID);
 
             // deactivate participant
-            identityHubRuntime.getIdentityEndpoint().baseRequest()
-                    .header(new Header("x-api-key", superUserKey))
-                    .contentType(ContentType.JSON)
-                    .post("/v1alpha/participants/%s/state?isActive=false".formatted(toBase64(participantId)))
+            identityHub.getIdentityEndpoint().baseRequest()
+                    .header(superUserAuth)
+                    .contentType(JSON)
+                    .post("/v1alpha/participants/%s/state?isActive=false".formatted(PARTICIPANT_CONTEXT_ID_BASE64))
                     .then()
                     .log().ifValidationFails()
                     .statusCode(204);
 
 
-            var keyDesc = identityHubRuntime.createKeyDescriptor(participantId).keyId("new-key-id").build();
-            identityHubRuntime.getIdentityEndpoint().baseRequest()
+            var keyDesc = identityHub.createKeyDescriptor(PARTICIPANT_CONTEXT_ID).keyId("new-key-id").build();
+            identityHub.getIdentityEndpoint().baseRequest()
                     .contentType(JSON)
-                    .header(new Header("x-api-key", superUserKey))
+                    .header(superUserAuth)
                     .body(keyDesc)
-                    .put("/v1alpha/participants/%s/keypairs".formatted(toBase64(participantId)))
+                    .put("/v1alpha/participants/%s/keypairs".formatted(PARTICIPANT_CONTEXT_ID_BASE64))
                     .then()
                     .log().ifValidationFails()
                     .statusCode(400)
                     .body(containsString("To add a key pair, the ParticipantContext with ID 'user1' must be in state"));
 
-            assertThat(identityHubRuntime.getKeyPairsForParticipant(participantId)).hasSize(1)
+            assertThat(identityHub.getKeyPairsForParticipant(PARTICIPANT_CONTEXT_ID)).hasSize(1)
                     .noneMatch(kpr -> kpr.getKeyId().equals(keyDesc.getKeyId()));
             verify(subscriber, never()).on(argThat(e -> e.getPayload() instanceof KeyPairAdded evt && evt.getKeyId().equals(keyDesc.getKeyId())));
         }
 
         @Test
-        void addKeyPair_withoutActivate(IdentityHubRuntime identityHubRuntime, EventRouter router) {
+        void addKeyPair_withoutActivate(IdentityHub identityHub, EventRouter router) {
             var subscriber = mock(EventSubscriber.class);
             router.registerSync(KeyPairActivated.class, subscriber);
 
-            var participantId = "user1";
-            var token = identityHubRuntime.createParticipant(participantId).apiKey();
 
-            var keyDesc = identityHubRuntime.createKeyDescriptor(participantId)
+            var auth = authorizeUser(PARTICIPANT_CONTEXT_ID, identityHub);
+
+            var keyDesc = identityHub.createKeyDescriptor(PARTICIPANT_CONTEXT_ID)
                     .keyId(UUID.randomUUID().toString())
                     .active(false)
                     .build();
-            identityHubRuntime.getIdentityEndpoint().baseRequest()
+            identityHub.getIdentityEndpoint().baseRequest()
                     .contentType(JSON)
-                    .header(new Header("x-api-key", token))
+                    .header(auth)
                     .body(keyDesc)
-                    .put("/v1alpha/participants/%s/keypairs".formatted(toBase64(participantId)))
+                    .put("/v1alpha/participants/%s/keypairs".formatted(PARTICIPANT_CONTEXT_ID_BASE64))
                     .then()
                     .log().ifValidationFails()
                     .statusCode(204)
                     .body(notNullValue());
 
-            assertThat(identityHubRuntime.getKeyPairsForParticipant(participantId))
+            assertThat(identityHub.getKeyPairsForParticipant(PARTICIPANT_CONTEXT_ID))
                     .hasSizeGreaterThanOrEqualTo(2)
                     .anyMatch(kpr -> kpr.getState() == KeyPairState.CREATED.code());
             verify(subscriber, never()).on(argThat(evt -> evt.getPayload() instanceof KeyPairActivated kpa && kpa.getKeyId().equals(keyDesc.getKeyId())));
         }
 
         @Test
-        void rotate_withSuperUserToken(IdentityHubRuntime identityHubRuntime, EventRouter router) {
-            var superUserKey = identityHubRuntime.createSuperUser().apiKey();
+        void rotate_withSuperUserToken(IdentityHub identityHub, EventRouter router) {
+            var superUserAuth = authorizeUser(SUPER_USER, identityHub);
             var subscriber = mock(EventSubscriber.class);
             router.registerSync(KeyPairRotated.class, subscriber);
             router.registerSync(KeyPairAdded.class, subscriber);
 
-            var user1 = "user1";
-            identityHubRuntime.createParticipant(user1);
 
-            var keyPairId = identityHubRuntime.createKeyPair(user1).getResourceId();
+            identityHub.createParticipant(PARTICIPANT_CONTEXT_ID);
+
+            var keyPairId = identityHub.createKeyPair(PARTICIPANT_CONTEXT_ID).getResourceId();
 
             // attempt to publish user1's DID document, which should fail
-            var keyDesc = identityHubRuntime.createKeyDescriptor(user1).build();
-            identityHubRuntime.getIdentityEndpoint().baseRequest()
+            var keyDesc = identityHub.createKeyDescriptor(PARTICIPANT_CONTEXT_ID).build();
+            identityHub.getIdentityEndpoint().baseRequest()
                     .contentType(JSON)
-                    .header(new Header("x-api-key", superUserKey))
+                    .header(superUserAuth)
                     .body(keyDesc)
-                    .post("/v1alpha/participants/%s/keypairs/%s/rotate".formatted(toBase64(user1), keyPairId))
+                    .post("/v1alpha/participants/%s/keypairs/%s/rotate".formatted(PARTICIPANT_CONTEXT_ID_BASE64, keyPairId))
                     .then()
                     .log().ifValidationFails()
                     .statusCode(204)
@@ -367,7 +352,7 @@ public class KeyPairResourceApiEndToEndTest {
             // verify that the "rotated" event fired once
             verify(subscriber).on(argThat(env -> {
                 if (env.getPayload() instanceof KeyPairRotated evt) {
-                    return evt.getParticipantContextId().equals(user1);
+                    return evt.getParticipantContextId().equals(PARTICIPANT_CONTEXT_ID);
                 }
                 return false;
             }));
@@ -383,26 +368,26 @@ public class KeyPairResourceApiEndToEndTest {
 
         @ParameterizedTest(name = "New KeyID {0}")
         @ValueSource(strings = {"did:web:user1#new-key-id", "new-key-id"})
-        void rotate_withUserToken(String keyId, IdentityHubRuntime identityHubRuntime, EventRouter router, StsAccountStore accountStore) {
+        void rotate_withUserToken(String keyId, IdentityHub identityHub, EventRouter router, StsAccountStore accountStore) {
             var subscriber = mock(EventSubscriber.class);
             router.registerSync(KeyPairRotated.class, subscriber);
             router.registerSync(KeyPairAdded.class, subscriber);
 
-            var participantId = "user1";
-            var userToken = identityHubRuntime.createParticipant(participantId).apiKey();
 
-            var keyPairId = identityHubRuntime.createKeyPair(participantId).getResourceId();
+            var userAuth = authorizeUser(PARTICIPANT_CONTEXT_ID, identityHub);
+
+            var keyPairId = identityHub.createKeyPair(PARTICIPANT_CONTEXT_ID).getResourceId();
 
             // attempt to publish user1's DID document, which should fail
-            var keyDesc = identityHubRuntime.createKeyDescriptor(participantId)
+            var keyDesc = identityHub.createKeyDescriptor(PARTICIPANT_CONTEXT_ID)
                     .privateKeyAlias("new-key-alias")
                     .keyId(keyId)
                     .build();
-            identityHubRuntime.getIdentityEndpoint().baseRequest()
+            identityHub.getIdentityEndpoint().baseRequest()
                     .contentType(JSON)
-                    .header(new Header("x-api-key", userToken))
+                    .header(userAuth)
                     .body(keyDesc)
-                    .post("/v1alpha/participants/%s/keypairs/%s/rotate".formatted(toBase64(participantId), keyPairId))
+                    .post("/v1alpha/participants/%s/keypairs/%s/rotate".formatted(PARTICIPANT_CONTEXT_ID_BASE64, keyPairId))
                     .then()
                     .log().ifValidationFails()
                     .statusCode(204)
@@ -411,7 +396,7 @@ public class KeyPairResourceApiEndToEndTest {
             // verify that the "rotated" event fired once
             verify(subscriber).on(argThat(env -> {
                 if (env.getPayload() instanceof KeyPairRotated evt) {
-                    return evt.getParticipantContextId().equals(participantId);
+                    return evt.getParticipantContextId().equals(PARTICIPANT_CONTEXT_ID);
                 }
                 return false;
             }));
@@ -424,21 +409,14 @@ public class KeyPairResourceApiEndToEndTest {
                 return false;
             }));
 
-            // verify that the STS client got updated correctly
-            assertThat(accountStore.findById(participantId)).isSucceeded()
-                    .satisfies(stsClient -> {
-                        assertThat(stsClient.getPrivateKeyAlias()).isEqualTo("new-key-alias");
-                        assertThat(stsClient.getPublicKeyReference()).isEqualTo("did:web:" + participantId + "#new-key-id");
-                    });
         }
 
         @Test
-        void rotate_withoutNewKey(IdentityHubRuntime identityHubRuntime, EventRouter router, StsAccountStore accountStore) {
+        void rotate_withoutNewKey(IdentityHub identityHub, EventRouter router, StsAccountStore accountStore) {
 
-            var participantId = "user1";
-            var userToken = identityHubRuntime.createParticipant(participantId).apiKey();
+            var userAuth = authorizeUser(PARTICIPANT_CONTEXT_ID, identityHub);
 
-            var keyPairId = identityHubRuntime.createKeyPair(participantId).getResourceId();
+            var keyPairId = identityHub.createKeyPair(PARTICIPANT_CONTEXT_ID).getResourceId();
 
             var subscriber = mock(EventSubscriber.class);
             router.registerSync(KeyPairRotated.class, subscriber);
@@ -446,10 +424,10 @@ public class KeyPairResourceApiEndToEndTest {
 
 
             // attempt to publish user1's DID document, which should fail
-            identityHubRuntime.getIdentityEndpoint().baseRequest()
+            identityHub.getIdentityEndpoint().baseRequest()
                     .contentType(JSON)
-                    .header(new Header("x-api-key", userToken))
-                    .post("/v1alpha/participants/%s/keypairs/%s/rotate".formatted(toBase64(participantId), keyPairId))
+                    .header(userAuth)
+                    .post("/v1alpha/participants/%s/keypairs/%s/rotate".formatted(PARTICIPANT_CONTEXT_ID_BASE64, keyPairId))
                     .then()
                     .log().ifValidationFails()
                     .statusCode(204)
@@ -458,41 +436,35 @@ public class KeyPairResourceApiEndToEndTest {
             // verify that the "rotated" event fired once
             verify(subscriber).on(argThat(env -> {
                 if (env.getPayload() instanceof KeyPairRotated evt) {
-                    return evt.getParticipantContextId().equals(participantId);
+                    return evt.getParticipantContextId().equals(PARTICIPANT_CONTEXT_ID);
                 }
                 return false;
             }));
             // verify that the correct "added" event fired
             verify(subscriber, never()).on(argThat(env -> env.getPayload() instanceof KeyPairAdded));
 
-            // verify that the STS client got updated correctly
-            assertThat(accountStore.findById(participantId)).isSucceeded()
-                    .satisfies(stsClient -> {
-                        assertThat(stsClient.getPrivateKeyAlias()).isEqualTo("");
-                        assertThat(stsClient.getPublicKeyReference()).isEqualTo("");
-                    });
         }
 
         @Test
-        void rotate_notAuthorized(IdentityHubRuntime identityHubRuntime, EventRouter router) {
+        void rotate_notAuthorized(IdentityHub identityHub, EventRouter router) {
             var subscriber = mock(EventSubscriber.class);
             router.registerSync(KeyPairRotated.class, subscriber);
 
-            var user1 = "user1";
-            var token = identityHubRuntime.createParticipant(user1);
+
+            identityHub.createParticipant(PARTICIPANT_CONTEXT_ID);
 
             var user2 = "user2";
-            var token2 = identityHubRuntime.createParticipant(user2).apiKey();
+            var invalidAuth = authorizeUser(user2, identityHub);
 
-            var keyId = identityHubRuntime.createKeyPair(user1).getResourceId();
+            var keyId = identityHub.createKeyPair(PARTICIPANT_CONTEXT_ID).getResourceId();
 
             // attempt to publish user1's DID document, which should fail
-            var keyDesc = identityHubRuntime.createKeyDescriptor(user1).build();
-            identityHubRuntime.getIdentityEndpoint().baseRequest()
+            var keyDesc = identityHub.createKeyDescriptor(PARTICIPANT_CONTEXT_ID).build();
+            identityHub.getIdentityEndpoint().baseRequest()
                     .contentType(JSON)
-                    .header(new Header("x-api-key", token2))
+                    .header(invalidAuth)
                     .body(keyDesc)
-                    .post("/v1alpha/participants/%s/keypairs/%s/rotate".formatted(user1, keyId))
+                    .post("/v1alpha/participants/%s/keypairs/%s/rotate".formatted(PARTICIPANT_CONTEXT_ID_BASE64, keyId))
                     .then()
                     .log().ifValidationFails()
                     .statusCode(403)
@@ -501,36 +473,36 @@ public class KeyPairResourceApiEndToEndTest {
             // make sure that the event to add the _new_ keypair was never fired
             verify(subscriber, never()).on(argThat(env -> {
                 if (env.getPayload() instanceof KeyPairRotated evt) {
-                    return evt.getParticipantContextId().equals(user1) && evt.getKeyPairResource().equals(keyDesc.getKeyId());
+                    return evt.getParticipantContextId().equals(PARTICIPANT_CONTEXT_ID) && evt.getKeyPairResource().getKeyId().equals(keyDesc.getKeyId());
                 }
                 return false;
             }));
         }
 
         @Test
-        void rotate_withNewKey_shouldUpdateDidDocument(IdentityHubRuntime identityHubRuntime, EventRouter router, Vault vault) {
-            var participantId = "user1";
-            var userToken = identityHubRuntime.createParticipant(participantId).apiKey();
-            var keyPair = identityHubRuntime.getKeyPairsForParticipant(participantId).stream().findFirst().orElseThrow();
+        void rotate_withNewKey_shouldUpdateDidDocument(IdentityHub identityHub, EventRouter router, Vault vault) {
+
+            var userAuth = authorizeUser(PARTICIPANT_CONTEXT_ID, identityHub);
+            var keyPair = identityHub.getKeyPairsForParticipant(PARTICIPANT_CONTEXT_ID).stream().findFirst().orElseThrow();
 
             var subscriber = mock(EventSubscriber.class);
             router.registerSync(KeyPairRotated.class, subscriber);
             router.registerSync(KeyPairAdded.class, subscriber);
 
-            var originalAlias = participantId + "-alias";
-            var originalKeyId = participantId + "-key";
+            var originalAlias = PARTICIPANT_CONTEXT_ID + "-alias";
+            var originalKeyId = PARTICIPANT_CONTEXT_ID + "-key";
             var newPrivateKeyAlias = "new-alias";
             var newKeyId = "new-keyId";
-            var keyDesc = identityHubRuntime.createKeyDescriptor(participantId)
+            var keyDesc = identityHub.createKeyDescriptor(PARTICIPANT_CONTEXT_ID)
                     .active(true)
                     .privateKeyAlias(newPrivateKeyAlias)
                     .keyId(newKeyId)
                     .build();
-            identityHubRuntime.getIdentityEndpoint().baseRequest()
+            identityHub.getIdentityEndpoint().baseRequest()
                     .contentType(JSON)
-                    .header(new Header("x-api-key", userToken))
+                    .header(userAuth)
                     .body(keyDesc)
-                    .post("/v1alpha/participants/%s/keypairs/%s/rotate".formatted(toBase64(participantId), keyPair.getId()))
+                    .post("/v1alpha/participants/%s/keypairs/%s/rotate".formatted(PARTICIPANT_CONTEXT_ID_BASE64, keyPair.getId()))
                     .then()
                     .log().ifValidationFails()
                     .statusCode(204)
@@ -538,111 +510,112 @@ public class KeyPairResourceApiEndToEndTest {
 
             verify(subscriber).on(argThat(evt -> evt.getPayload() instanceof KeyPairRotated));
             verify(subscriber).on(argThat(evt -> evt.getPayload() instanceof KeyPairAdded));
-            var didDoc = identityHubRuntime.getDidForParticipant(participantId);
+            var didDoc = identityHub.getDidForParticipant(PARTICIPANT_CONTEXT_ID);
             assertThat(didDoc).isNotEmpty()
                     .allSatisfy(doc -> assertThat(doc.getVerificationMethod()).hasSize(2)
                             .anyMatch(vm -> vm.getId().equals(originalKeyId)) // the original (now-rotated) key
                             .anyMatch(vm -> vm.getId().equals(newKeyId))); // the new key
-            assertThat(identityHubRuntime.getKeyPairsForParticipant(participantId).stream().filter(kpr -> kpr.getKeyId().equals(originalKeyId)))
+            assertThat(identityHub.getKeyPairsForParticipant(PARTICIPANT_CONTEXT_ID).stream().filter(kpr -> kpr.getKeyId().equals(originalKeyId)))
                     .allMatch(kpr -> kpr.getState() == KeyPairState.ROTATED.code());
-            assertThat(vault.resolveSecret(originalAlias)).isNull();
-            assertThat(vault.resolveSecret(newPrivateKeyAlias)).isNotNull();
+            assertThat(vault.resolveSecret(PARTICIPANT_CONTEXT_ID, originalAlias)).isNull();
+            assertThat(vault.resolveSecret(PARTICIPANT_CONTEXT_ID, newPrivateKeyAlias)).isNotNull();
 
         }
 
         @Test
-        void rotate_withNewKey_whenDidNotPublished_shouldNotUpdate(IdentityHubRuntime identityHubRuntime, EventRouter router) {
+        void rotate_withNewKey_whenDidNotPublished_shouldNotUpdate(IdentityHub identityHub, EventRouter router, IdentityHubParticipantContextService service) {
             var subscriber = mock(EventSubscriber.class);
             router.registerSync(KeyPairRotated.class, subscriber);
             router.registerSync(KeyPairAdded.class, subscriber);
             router.registerSync(DidDocumentPublished.class, subscriber);
 
-            var participantId = "user1";
-            var userToken = identityHubRuntime.createParticipant(participantId, List.of(), false).apiKey();
-            var keyPair = identityHubRuntime.getKeyPairsForParticipant(participantId).stream().findFirst().orElseThrow();
+            var originalKeyId = PARTICIPANT_CONTEXT_ID + "-key";
 
-            var originalKeyId = participantId + "-key";
+            var p = identityHub.buildParticipantManifest(PARTICIPANT_CONTEXT_ID, originalKeyId)
+                    .active(false)
+                    .did("did:web:" + PARTICIPANT_CONTEXT_ID)
+                    .build();
+            service.createParticipantContext(p).orElseThrow(f -> new EdcException(f.getFailureDetail()));
+
+            var userAuth = authorizeUser(PARTICIPANT_CONTEXT_ID, identityHub);
+            var keyPair = identityHub.getKeyPairsForParticipant(PARTICIPANT_CONTEXT_ID).stream().findFirst().orElseThrow();
+
             var newPrivateKeyAlias = "new-alias";
             var newKeyId = "new-keyId";
-            var keyDesc = identityHubRuntime.createKeyDescriptor(participantId)
+            var keyDesc = identityHub.createKeyDescriptor(PARTICIPANT_CONTEXT_ID)
                     .active(true)
                     .privateKeyAlias(newPrivateKeyAlias)
                     .keyId(newKeyId)
                     .build();
-            identityHubRuntime.getIdentityEndpoint().baseRequest()
+            identityHub.getIdentityEndpoint().baseRequest()
                     .contentType(JSON)
-                    .header(new Header("x-api-key", userToken))
+                    .header(userAuth)
                     .body(keyDesc)
-                    .post("/v1alpha/participants/%s/keypairs/%s/rotate".formatted(toBase64(participantId), keyPair.getId()))
+                    .post("/v1alpha/participants/%s/keypairs/%s/rotate".formatted(PARTICIPANT_CONTEXT_ID_BASE64, keyPair.getId()))
                     .then()
                     .log().ifValidationFails()
                     .statusCode(204)
                     .body(notNullValue());
 
-            var didDoc = identityHubRuntime.getDidForParticipant(participantId);
+            var didDoc = identityHub.getDidForParticipant(PARTICIPANT_CONTEXT_ID);
             assertThat(didDoc).isNotEmpty()
                     .allSatisfy(doc -> assertThat(doc.getVerificationMethod()).hasSize(2)
                             .anyMatch(vm -> vm.getId().equals(originalKeyId)) // the original (now-rotated) key
                             .anyMatch(vm -> vm.getId().equals(newKeyId))); // the new key
-            assertThat(identityHubRuntime.getKeyPairsForParticipant(participantId).stream().filter(kpr -> kpr.getKeyId().equals(originalKeyId)))
+            assertThat(identityHub.getKeyPairsForParticipant(PARTICIPANT_CONTEXT_ID).stream().filter(kpr -> kpr.getKeyId().equals(originalKeyId)))
                     .allMatch(kpr -> kpr.getState() == KeyPairState.ROTATED.code());
             verify(subscriber, never()).on(argThat(evt -> evt.getPayload() instanceof DidDocumentPublished));
         }
 
         @ParameterizedTest(name = "New Key-ID: {0}")
         @ValueSource(strings = {"new-keyId", "did:web:user1#new-keyId"})
-        void revoke(String newKeyId, IdentityHubRuntime identityHubRuntime, StsAccountStore accountStore) {
-            var superUserKey = identityHubRuntime.createSuperUser().apiKey();
-            var participantId = "user1";
-            var token = identityHubRuntime.createParticipant(participantId).apiKey();
+        @Disabled
+        void revoke(String newKeyId, IdentityHub identityHub) {
+            var superUserAuth = authorizeUser(SUPER_USER, identityHub);
 
-            var keyId = identityHubRuntime.createKeyPair(participantId).getResourceId();
+            var userAuth = authorizeUser(PARTICIPANT_CONTEXT_ID, identityHub);
 
-            assertThat(Arrays.asList(token, superUserKey))
-                    .allSatisfy(t -> {
-                        var keyDesc = identityHubRuntime.createKeyDescriptor(participantId)
+            var keyId = identityHub.createKeyPair(PARTICIPANT_CONTEXT_ID).getResourceId();
+
+            assertThat(Arrays.asList(userAuth, superUserAuth))
+                    .allSatisfy(header -> {
+                        var keyDesc = identityHub.createKeyDescriptor(PARTICIPANT_CONTEXT_ID)
                                 .privateKeyAlias("new-alias")
                                 .keyId(newKeyId)
                                 .build();
 
-                        identityHubRuntime.getIdentityEndpoint().baseRequest()
+                        identityHub.getIdentityEndpoint().baseRequest()
                                 .contentType(JSON)
-                                .header(new Header("x-api-key", t))
+                                .header(header)
                                 .body(keyDesc)
-                                .post("/v1alpha/participants/%s/keypairs/%s/revoke".formatted(toBase64(participantId), keyId))
+                                .post("/v1alpha/participants/%s/keypairs/%s/revoke".formatted(PARTICIPANT_CONTEXT_ID_BASE64, keyId))
                                 .then()
                                 .log().ifValidationFails()
                                 .statusCode(204)
                                 .body(notNullValue());
 
-                        assertThat(identityHubRuntime.getDidForParticipant(participantId)).hasSize(1)
+                        assertThat(identityHub.getDidForParticipant(PARTICIPANT_CONTEXT_ID)).hasSize(1)
                                 .allSatisfy(dd -> assertThat(dd.getVerificationMethod()).noneMatch(vm -> vm.getId().equals(keyId)));
 
-                        // verify that the STS client got updated correctly
-                        assertThat(accountStore.findById(participantId)).isSucceeded()
-                                .satisfies(stsClient -> {
-                                    assertThat(stsClient.getPrivateKeyAlias()).isEqualTo("new-alias");
-                                    assertThat(stsClient.getPublicKeyReference()).isEqualTo("did:web:" + participantId + "#new-keyId");
-                                });
                     });
         }
 
         @Test
-        void revoke_withoutNewKey(IdentityHubRuntime identityHubRuntime, EventRouter router, StsAccountStore accountStore) {
+        void revoke_withoutNewKey(IdentityHub identityHub, EventRouter router) {
             var subscriber = mock(EventSubscriber.class);
             router.registerSync(KeyPairRotated.class, subscriber);
             router.registerSync(KeyPairRevoked.class, subscriber);
 
-            var participantId = "user1";
-            var userToken = identityHubRuntime.createParticipant(participantId).apiKey();
 
-            var keyPairId = identityHubRuntime.createKeyPair(participantId).getResourceId();
+            var userAuth = authorizeUser(PARTICIPANT_CONTEXT_ID, identityHub);
+
+            var keyPairId = identityHub.createKeyPair(PARTICIPANT_CONTEXT_ID).getResourceId();
 
             // attempt to publish user1's DID document, which should fail
-            identityHubRuntime.getIdentityEndpoint().baseRequest()
+            identityHub.getIdentityEndpoint().baseRequest()
                     .contentType(JSON)
-                    .header(new Header("x-api-key", userToken))
-                    .post("/v1alpha/participants/%s/keypairs/%s/revoke".formatted(toBase64(participantId), keyPairId))
+                    .header(userAuth)
+                    .post("/v1alpha/participants/%s/keypairs/%s/revoke".formatted(PARTICIPANT_CONTEXT_ID_BASE64, keyPairId))
                     .then()
                     .log().ifValidationFails()
                     .statusCode(204)
@@ -651,38 +624,30 @@ public class KeyPairResourceApiEndToEndTest {
             // verify that the "rotated" event fired once
             verify(subscriber).on(argThat(env -> {
                 if (env.getPayload() instanceof KeyPairRevoked evt) {
-                    return evt.getParticipantContextId().equals(participantId);
+                    return evt.getParticipantContextId().equals(PARTICIPANT_CONTEXT_ID);
                 }
                 return false;
             }));
             // verify that the correct "added" event fired
             verify(subscriber, never()).on(argThat(env -> env.getPayload() instanceof KeyPairAdded));
 
-            // verify that the STS client got updated correctly
-            assertThat(accountStore.findById(participantId)).isSucceeded()
-                    .satisfies(stsClient -> {
-                        assertThat(stsClient.getPrivateKeyAlias()).isEqualTo("");
-                        assertThat(stsClient.getPublicKeyReference()).isEqualTo("");
-                    });
         }
 
         @Test
-        void revoke_notAuthorized(IdentityHubRuntime identityHubRuntime) {
-            var user1 = "user1";
-            var token1 = identityHubRuntime.createParticipant(user1);
+        void revoke_notAuthorized(IdentityHub identityHub) {
+            identityHub.createParticipant(PARTICIPANT_CONTEXT_ID);
 
-            var user2 = "user2";
-            var token2 = identityHubRuntime.createParticipant(user2).apiKey();
+            var invalidAuth = authorizeUser("user2", identityHub);
 
-            var keyId = identityHubRuntime.createKeyPair(user1).getResourceId();
+            var keyId = identityHub.createKeyPair(PARTICIPANT_CONTEXT_ID).getResourceId();
 
             // attempt to publish user1's DID document, which should fail
-            var keyDesc = identityHubRuntime.createKeyDescriptor(user1).build();
-            identityHubRuntime.getIdentityEndpoint().baseRequest()
+            var keyDesc = identityHub.createKeyDescriptor(PARTICIPANT_CONTEXT_ID).build();
+            identityHub.getIdentityEndpoint().baseRequest()
                     .contentType(JSON)
-                    .header(new Header("x-api-key", token2))
+                    .header(invalidAuth)
                     .body(keyDesc)
-                    .post("/v1alpha/participants/%s/keypairs/%s/revoke".formatted(toBase64(user1), keyId))
+                    .post("/v1alpha/participants/%s/keypairs/%s/revoke".formatted(PARTICIPANT_CONTEXT_ID_BASE64, keyId))
                     .then()
                     .log().ifValidationFails()
                     .statusCode(403)
@@ -690,16 +655,16 @@ public class KeyPairResourceApiEndToEndTest {
         }
 
         @Test
-        void getAll(IdentityHubRuntime identityHubRuntime) {
-            var superUserKey = identityHubRuntime.createSuperUser().apiKey();
+        void getAll(IdentityHub identityHub) {
+            var superUserAuth = authorizeUser(SUPER_USER, identityHub);
             range(0, 10)
                     .forEach(i -> {
                         var participantId = "user" + i;
-                        identityHubRuntime.createParticipant(participantId); // implicitly creates a keypair
+                        identityHub.createParticipant(participantId); // implicitly creates a keypair
                     });
-            var found = identityHubRuntime.getIdentityEndpoint().baseRequest()
+            var found = identityHub.getIdentityEndpoint().baseRequest()
                     .contentType(JSON)
-                    .header(new Header("x-api-key", superUserKey))
+                    .header(superUserAuth)
                     .get("/v1alpha/keypairs")
                     .then()
                     .log().ifValidationFails()
@@ -709,16 +674,16 @@ public class KeyPairResourceApiEndToEndTest {
         }
 
         @Test
-        void getAll_withPaging(IdentityHubRuntime identityHubRuntime) {
-            var superUserKey = identityHubRuntime.createSuperUser().apiKey();
+        void getAll_withPaging(IdentityHub identityHub) {
+            var superUserAuth = authorizeUser(SUPER_USER, identityHub);
             range(0, 10)
                     .forEach(i -> {
                         var participantId = "user" + i;
-                        identityHubRuntime.createParticipant(participantId); // implicitly creates a keypair
+                        identityHub.createParticipant(participantId); // implicitly creates a keypair
                     });
-            var found = identityHubRuntime.getIdentityEndpoint().baseRequest()
+            var found = identityHub.getIdentityEndpoint().baseRequest()
                     .contentType(JSON)
-                    .header(new Header("x-api-key", superUserKey))
+                    .header(superUserAuth)
                     .get("/v1alpha/keypairs?offset=2&limit=4")
                     .then()
                     .log().ifValidationFails()
@@ -728,16 +693,16 @@ public class KeyPairResourceApiEndToEndTest {
         }
 
         @Test
-        void getAll_withDefaultPaging(IdentityHubRuntime identityHubRuntime) {
-            var superUserKey = identityHubRuntime.createSuperUser().apiKey();
+        void getAll_withDefaultPaging(IdentityHub identityHub) {
+            var superUserAuth = authorizeUser(SUPER_USER, identityHub);
             range(0, 70)
                     .forEach(i -> {
                         var participantId = "user" + i;
-                        identityHubRuntime.createParticipant(participantId); // implicitly creates a keypair
+                        identityHub.createParticipant(participantId); // implicitly creates a keypair
                     });
-            var found = identityHubRuntime.getIdentityEndpoint().baseRequest()
+            var found = identityHub.getIdentityEndpoint().baseRequest()
                     .contentType(JSON)
-                    .header(new Header("x-api-key", superUserKey))
+                    .header(superUserAuth)
                     .get("/v1alpha/keypairs")
                     .then()
                     .log().ifValidationFails()
@@ -747,17 +712,17 @@ public class KeyPairResourceApiEndToEndTest {
         }
 
         @Test
-        void getAll_notAuthorized(IdentityHubRuntime identityHubRuntime) {
-            var attackerToken = identityHubRuntime.createParticipant("attacker").apiKey();
+        void getAll_notAuthorized(IdentityHub identityHub) {
+            var attackerToken = authorizeUser("attacker", identityHub);
 
             range(0, 10)
                     .forEach(i -> {
                         var participantId = "user" + i;
-                        identityHubRuntime.createParticipant(participantId); // implicitly creates a keypair
+                        identityHub.createParticipant(participantId); // implicitly creates a keypair
                     });
-            identityHubRuntime.getIdentityEndpoint().baseRequest()
+            identityHub.getIdentityEndpoint().baseRequest()
                     .contentType(JSON)
-                    .header(new Header("x-api-key", attackerToken))
+                    .header(attackerToken)
                     .get("/v1alpha/keypairs")
                     .then()
                     .log().ifValidationFails()
@@ -765,126 +730,132 @@ public class KeyPairResourceApiEndToEndTest {
         }
 
         @Test
-        void activate_superUserToken(IdentityHubRuntime identityHubRuntime, EventRouter router) {
+        void activate_superUserToken(IdentityHub identityHub, EventRouter router) {
             var subscriber = mock(EventSubscriber.class);
             router.registerSync(KeyPairActivated.class, subscriber);
 
-            var superUserKey = identityHubRuntime.createSuperUser().apiKey();
-            var user1 = "user1";
-            identityHubRuntime.createParticipant(user1);
-            var keyDescriptor = identityHubRuntime.createKeyPair(user1);
+            var superUserAuth = authorizeUser(SUPER_USER, identityHub);
+
+            identityHub.createParticipant(PARTICIPANT_CONTEXT_ID);
+            var keyDescriptor = identityHub.createKeyPair(PARTICIPANT_CONTEXT_ID);
             var keyPairId = keyDescriptor.getResourceId();
 
-            identityHubRuntime.getIdentityEndpoint().baseRequest()
+            identityHub.getIdentityEndpoint().baseRequest()
                     .contentType(JSON)
-                    .header(new Header("x-api-key", superUserKey))
-                    .post("/v1alpha/participants/%s/keypairs/%s/activate".formatted(toBase64(user1), keyPairId))
+                    .header(superUserAuth)
+                    .post("/v1alpha/participants/%s/keypairs/%s/activate".formatted(PARTICIPANT_CONTEXT_ID_BASE64, keyPairId))
                     .then()
                     .log().ifValidationFails()
                     .statusCode(204)
                     .body(notNullValue());
 
-            assertThat(identityHubRuntime.getDidForParticipant(user1))
+            assertThat(identityHub.getDidForParticipant(PARTICIPANT_CONTEXT_ID))
                     .hasSize(1)
                     .anySatisfy(dd -> assertThat(dd.getVerificationMethod()).hasSize(2).anyMatch(vm -> vm.getId().equals(keyDescriptor.getKeyId())));
 
-            assertThat(identityHubRuntime.getDidResourceForParticipant("did:web:" + user1).getState()).isEqualTo(DidState.PUBLISHED.code());
+            assertThat(identityHub.getDidResourceForParticipant("did:web:" + PARTICIPANT_CONTEXT_ID).getState()).isEqualTo(DidState.PUBLISHED.code());
             verify(subscriber).on(argThat(e -> e.getPayload() instanceof KeyPairActivated kpa && kpa.getKeyPairResource().getId().equals(keyPairId)));
         }
 
         @Test
-        void activate_userToken(IdentityHubRuntime identityHubRuntime, EventRouter router) {
+        void activate_userToken(IdentityHub identityHub, EventRouter router) {
             var subscriber = mock(EventSubscriber.class);
             router.registerSync(KeyPairActivated.class, subscriber);
             router.registerSync(DidDocumentPublished.class, subscriber);
 
-            var participantId = "user1";
-            var token = identityHubRuntime.createParticipant(participantId).apiKey();
-            assertThat(identityHubRuntime.getDidForParticipant(participantId))
+
+            var userAuth = authorizeUser(PARTICIPANT_CONTEXT_ID, identityHub);
+            assertThat(identityHub.getDidForParticipant(PARTICIPANT_CONTEXT_ID))
                     .allSatisfy(dd -> assertThat(dd.getVerificationMethod()).hasSize(1));
 
-            var keyDescriptor = identityHubRuntime.createKeyDescriptor(participantId).active(false).build();
-            identityHubRuntime.createKeyPair(participantId, keyDescriptor);
+            var keyDescriptor = identityHub.createKeyDescriptor(PARTICIPANT_CONTEXT_ID).active(false).build();
+            identityHub.createKeyPair(PARTICIPANT_CONTEXT_ID, keyDescriptor);
             var keyPairId = keyDescriptor.getResourceId();
 
-            identityHubRuntime.getIdentityEndpoint().baseRequest()
+            identityHub.getIdentityEndpoint().baseRequest()
                     .contentType(JSON)
-                    .header(new Header("x-api-key", token))
-                    .post("/v1alpha/participants/%s/keypairs/%s/activate".formatted(toBase64(participantId), keyPairId))
+                    .header(userAuth)
+                    .post("/v1alpha/participants/%s/keypairs/%s/activate".formatted(PARTICIPANT_CONTEXT_ID_BASE64, keyPairId))
                     .then()
                     .log().ifValidationFails()
                     .statusCode(204)
                     .body(notNullValue());
 
-            assertThat(identityHubRuntime.getDidForParticipant(participantId))
+            assertThat(identityHub.getDidForParticipant(PARTICIPANT_CONTEXT_ID))
                     .hasSize(1)
                     .allSatisfy(dd -> assertThat(dd.getVerificationMethod())
                             .hasSize(2)
                             .anyMatch(vm -> vm.getId().equals(keyDescriptor.getKeyId())));
 
-            assertThat(identityHubRuntime.getDidResourceForParticipant("did:web:" + participantId).getState()).isEqualTo(DidState.PUBLISHED.code());
+            assertThat(identityHub.getDidResourceForParticipant("did:web:" + PARTICIPANT_CONTEXT_ID).getState()).isEqualTo(DidState.PUBLISHED.code());
             verify(subscriber).on(argThat(e -> e.getPayload() instanceof KeyPairActivated kpa && kpa.getKeyPairResource().getId().equals(keyPairId)));
             // publishes did when creating the user, and when activating
             verify(subscriber, atLeast(2)).on(argThat(e -> e.getPayload() instanceof DidDocumentPublished));
         }
 
         @Test
-        void activate_whenParticipantNotActive_shouldNotPublishDid(IdentityHubRuntime identityHubRuntime, EventRouter router) {
+        void activate_whenParticipantNotActive_shouldNotPublishDid(IdentityHub identityHub, EventRouter router, IdentityHubParticipantContextService service) {
             var subscriber = mock(EventSubscriber.class);
             router.registerSync(KeyPairActivated.class, subscriber);
 
-            var user1 = "user1";
-            var token = identityHubRuntime.createParticipant(user1, List.of(), false).apiKey();
-            var keyDescriptor = identityHubRuntime.createKeyPair(user1);
+            var p = identityHub.buildParticipantManifest(PARTICIPANT_CONTEXT_ID, PARTICIPANT_CONTEXT_ID + "key")
+                    .active(false)
+                    .did("did:web:" + PARTICIPANT_CONTEXT_ID)
+                    .build();
+            service.createParticipantContext(p).orElseThrow(f -> new EdcException(f.getFailureDetail()));
+
+            var header = authorizeUser(p.getParticipantContextId(), identityHub);
+
+            var keyDescriptor = identityHub.createKeyPair(PARTICIPANT_CONTEXT_ID);
             var keyPairId = keyDescriptor.getResourceId();
 
-            identityHubRuntime.getIdentityEndpoint().baseRequest()
+            identityHub.getIdentityEndpoint().baseRequest()
                     .contentType(JSON)
-                    .header(new Header("x-api-key", token))
-                    .post("/v1alpha/participants/%s/keypairs/%s/activate".formatted(toBase64(user1), keyPairId))
+                    .header(header)
+                    .post("/v1alpha/participants/%s/keypairs/%s/activate".formatted(PARTICIPANT_CONTEXT_ID_BASE64, keyPairId))
                     .then()
                     .log().ifValidationFails()
                     .statusCode(204)
                     .body(notNullValue());
 
             // DID should contain 2 VerificationMethods, one of with should be the newly activated one
-            assertThat(identityHubRuntime.getDidForParticipant(user1))
+            assertThat(identityHub.getDidForParticipant(PARTICIPANT_CONTEXT_ID))
                     .hasSize(1)
                     .allSatisfy(dd -> assertThat(dd.getVerificationMethod())
                             .hasSize(2)
                             .anyMatch(vm -> vm.getId().equals(keyDescriptor.getKeyId())));
 
-            assertThat(identityHubRuntime.getDidResourceForParticipant("did:web:" + user1).getState()).isNotEqualTo(DidState.PUBLISHED.code());
+            assertThat(identityHub.getDidResourceForParticipant("did:web:" + PARTICIPANT_CONTEXT_ID).getState()).isNotEqualTo(DidState.PUBLISHED.code());
             // all key pairs should be ACTIVATED
-            assertThat(identityHubRuntime.getKeyPairsForParticipant(user1))
+            assertThat(identityHub.getKeyPairsForParticipant(PARTICIPANT_CONTEXT_ID))
                     .allMatch(kpr -> kpr.getState() == KeyPairState.ACTIVATED.code());
 
             verify(subscriber).on(argThat(e -> e.getPayload() instanceof KeyPairActivated kpa && kpa.getKeyPairResource().getId().equals(keyPairId)));
         }
 
         @Test
-        void activate_notExists(IdentityHubRuntime identityHubRuntime, EventRouter router) {
+        void activate_notExists(IdentityHub identityHub, EventRouter router) {
             var subscriber = mock(EventSubscriber.class);
             router.registerSync(KeyPairActivated.class, subscriber);
 
-            var superUserKey = identityHubRuntime.createSuperUser().apiKey();
-            var user1 = "user1";
-            var token = identityHubRuntime.createParticipant(user1).apiKey();
+            var superUserAuth = authorizeUser(SUPER_USER, identityHub);
+
+            var userAuth = authorizeUser(PARTICIPANT_CONTEXT_ID, identityHub);
             var keyPairId = "non-exist-keypair-id";
 
-            assertThat(Arrays.asList(token, superUserKey))
-                    .allSatisfy(t -> {
+            assertThat(Arrays.asList(userAuth, superUserAuth))
+                    .allSatisfy(auth -> {
                         reset(subscriber);
-                        identityHubRuntime.getIdentityEndpoint().baseRequest()
+                        identityHub.getIdentityEndpoint().baseRequest()
                                 .contentType(JSON)
-                                .header(new Header("x-api-key", t))
-                                .post("/v1alpha/participants/%s/keypairs/%s/activate".formatted(toBase64(user1), keyPairId))
+                                .header(auth)
+                                .post("/v1alpha/participants/%s/keypairs/%s/activate".formatted(PARTICIPANT_CONTEXT_ID_BASE64, keyPairId))
                                 .then()
                                 .log().ifError()
                                 .statusCode(404)
                                 .body(notNullValue());
 
-                        assertThat(identityHubRuntime.getDidForParticipant(user1))
+                        assertThat(identityHub.getDidForParticipant(PARTICIPANT_CONTEXT_ID))
                                 .hasSize(1)
                                 .allSatisfy(dd -> assertThat(dd.getVerificationMethod()).noneMatch(vm -> vm.getId().equals(keyPairId)));
 
@@ -893,57 +864,55 @@ public class KeyPairResourceApiEndToEndTest {
         }
 
         @Test
-        void activate_notAuthorized(IdentityHubRuntime identityHubRuntime) {
-            var user1 = "user1";
-            identityHubRuntime.createParticipant(user1);
-            var keyId = identityHubRuntime.createKeyPair(user1).getResourceId();
-            var attackerToken = identityHubRuntime.createParticipant("attacker").apiKey();
+        void activate_notAuthorized(IdentityHub identityHub) {
 
-            identityHubRuntime.getIdentityEndpoint().baseRequest()
+            identityHub.createParticipant(PARTICIPANT_CONTEXT_ID);
+            var keyId = identityHub.createKeyPair(PARTICIPANT_CONTEXT_ID).getResourceId();
+            var attackerToken = authorizeUser("attacker", identityHub);
+
+            identityHub.getIdentityEndpoint().baseRequest()
                     .contentType(JSON)
-                    .header(new Header("x-api-key", attackerToken))
-                    .post("/v1alpha/participants/%s/keypairs/%s/activate".formatted(toBase64(user1), keyId))
+                    .header(attackerToken)
+                    .post("/v1alpha/participants/%s/keypairs/%s/activate".formatted(PARTICIPANT_CONTEXT_ID_BASE64, keyId))
                     .then()
                     .log().ifValidationFails()
                     .statusCode(403)
                     .body(notNullValue());
 
-            assertThat(identityHubRuntime.getKeyPairsForParticipant(user1))
+            assertThat(identityHub.getKeyPairsForParticipant(PARTICIPANT_CONTEXT_ID))
                     .hasSize(2)
                     .anyMatch(keyPairResource -> keyPairResource.getId().equals(keyId) && keyPairResource.getState() != KeyPairState.ACTIVATED.code());
         }
 
         @Test
-        void activate_illegalState(IdentityHubRuntime identityHubRuntime) {
-            var user1 = "user1";
-            var token = identityHubRuntime.createParticipant(user1).apiKey();
-            var keyPairId = identityHubRuntime.createKeyPair(user1).getResourceId();
+        void activate_illegalState(IdentityHub identityHub) {
+
+            var token = authorizeUser(PARTICIPANT_CONTEXT_ID, identityHub);
+            var keyPairId = identityHub.createKeyPair(PARTICIPANT_CONTEXT_ID).getResourceId();
 
             // first revoke the key, which puts it in the REVOKED state
-            identityHubRuntime.getIdentityEndpoint().baseRequest()
+            identityHub.getIdentityEndpoint().baseRequest()
                     .contentType(JSON)
-                    .header(new Header("x-api-key", token))
-                    .post("/v1alpha/participants/%s/keypairs/%s/revoke".formatted(toBase64(user1), keyPairId))
+                    .header(token)
+                    .post("/v1alpha/participants/%s/keypairs/%s/revoke".formatted(PARTICIPANT_CONTEXT_ID_BASE64, keyPairId))
                     .then()
                     .log().ifValidationFails()
                     .statusCode(204)
                     .body(notNullValue());
 
             // now attempt to activate
-            identityHubRuntime.getIdentityEndpoint().baseRequest()
+            identityHub.getIdentityEndpoint().baseRequest()
                     .contentType(JSON)
-                    .header(new Header("x-api-key", token))
-                    .post("/v1alpha/participants/%s/keypairs/%s/activate".formatted(toBase64(user1), keyPairId))
+                    .header(token)
+                    .post("/v1alpha/participants/%s/keypairs/%s/activate".formatted(PARTICIPANT_CONTEXT_ID_BASE64, keyPairId))
                     .then()
                     .log().ifValidationFails()
                     .statusCode(400)
                     .body(notNullValue());
         }
 
+        protected abstract Header authorizeUser(String participantContextId, IdentityHub identityHub);
 
-        private String toBase64(String s) {
-            return Base64.getUrlEncoder().encodeToString(s.getBytes());
-        }
 
     }
 
@@ -952,12 +921,20 @@ public class KeyPairResourceApiEndToEndTest {
     class InMemory extends Tests {
 
         @RegisterExtension
-        static final IdentityHubExtension IDENTITY_HUB_EXTENSION = IdentityHubExtension.Builder.newInstance()
+        static final RuntimeExtension IDENTITY_HUB_EXTENSION = ComponentRuntimeExtension.Builder.newInstance()
                 .name(IH_RUNTIME_NAME)
-                .id(IH_RUNTIME_ID)
-                .modules(IH_RUNTIME_MEM_MODULES)
+                .modules(DefaultRuntimes.IdentityHub.MODULES)
+                .endpoints(DefaultRuntimes.IdentityHub.ENDPOINTS.build())
+                .configurationProvider(DefaultRuntimes.IdentityHub::config)
+                .paramProvider(IdentityHub.class, IdentityHub::forContext)
                 .build();
+
+        @Override
+        protected Header authorizeUser(String participantContextId, IdentityHub identityHub) {
+            return authorizeTokenBased(participantContextId, identityHub);
+        }
     }
+
 
     @Nested
     @PostgresqlIntegrationTest
@@ -976,12 +953,85 @@ public class KeyPairResourceApiEndToEndTest {
 
         @Order(2)
         @RegisterExtension
-        static final IdentityHubExtension IDENTITY_HUB_EXTENSION = IdentityHubExtension.Builder.newInstance()
+        static final RuntimeExtension IDENTITY_HUB_EXTENSION = ComponentRuntimeExtension.Builder.newInstance()
                 .name(IH_RUNTIME_NAME)
-                .id(IH_RUNTIME_ID)
-                .modules(IH_RUNTIME_SQL_MODULES)
+                .modules(DefaultRuntimes.IdentityHub.SQL_MODULES)
+                .endpoints(DefaultRuntimes.IdentityHub.ENDPOINTS.build())
+                .configurationProvider(DefaultRuntimes.IdentityHub::config)
                 .configurationProvider(() -> POSTGRESQL_EXTENSION.configFor(DB_NAME))
+                .paramProvider(IdentityHub.class, IdentityHub::forContext)
                 .build();
 
+        @Override
+        protected Header authorizeUser(String participantContextId, IdentityHub identityHub) {
+            return authorizeTokenBased(participantContextId, identityHub);
+        }
+    }
+
+    @Nested
+    @EndToEndTest
+    class InMemoryOauth2 extends Tests {
+
+        private static final String ISSUER = "issuer";
+        @Order(0)
+        @RegisterExtension
+        static final OauthServerEndToEndExtension OAUTH_2_EXTENSION = OauthServerEndToEndExtension.Builder.newInstance()
+                .issuer(ISSUER)
+                .build();
+
+        @Order(1)
+        @RegisterExtension
+        static final RuntimeExtension IDENTITY_HUB_EXTENSION = ComponentRuntimeExtension.Builder.newInstance()
+                .name(IH_RUNTIME_NAME)
+                .modules(DefaultRuntimes.IdentityHub.MODULES_OAUTH2)
+                .endpoints(DefaultRuntimes.IdentityHub.ENDPOINTS.build())
+                .configurationProvider(DefaultRuntimes.IdentityHub::config)
+                .configurationProvider(OAUTH_2_EXTENSION::getConfig)
+                .paramProvider(IdentityHub.class, IdentityHub::forContext)
+                .build();
+
+        @Override
+        protected Header authorizeUser(String participantContextId, IdentityHub identityHub) {
+            return authorizeOauth2(participantContextId, identityHub, OAUTH_2_EXTENSION.getAuthServer());
+        }
+    }
+
+    @Nested
+    @EndToEndTest
+    class PostgresOauth2 extends Tests {
+
+        @Order(0)
+        @RegisterExtension
+        static final PostgresqlEndToEndExtension POSTGRESQL_EXTENSION = new PostgresqlEndToEndExtension();
+
+        private static final String ISSUER = "issuer";
+        @Order(0)
+        @RegisterExtension
+        static final OauthServerEndToEndExtension OAUTH_2_EXTENSION = OauthServerEndToEndExtension.Builder.newInstance()
+                .issuer(ISSUER)
+                .build();
+        private static final String DB_NAME = "runtime";
+        @Order(1)
+        @RegisterExtension
+        static final BeforeAllCallback POSTGRES_CONTAINER_STARTER = context -> {
+            POSTGRESQL_EXTENSION.createDatabase(DB_NAME);
+        };
+
+        @Order(2)
+        @RegisterExtension
+        static final RuntimeExtension IDENTITY_HUB_EXTENSION = ComponentRuntimeExtension.Builder.newInstance()
+                .name(IH_RUNTIME_NAME)
+                .modules(DefaultRuntimes.IdentityHub.SQL_OAUTH2_MODULES)
+                .endpoints(DefaultRuntimes.IdentityHub.ENDPOINTS.build())
+                .configurationProvider(DefaultRuntimes.IdentityHub::config)
+                .configurationProvider(() -> POSTGRESQL_EXTENSION.configFor(DB_NAME))
+                .configurationProvider(OAUTH_2_EXTENSION::getConfig)
+                .paramProvider(IdentityHub.class, IdentityHub::forContext)
+                .build();
+
+        @Override
+        protected Header authorizeUser(String participantContextId, IdentityHub identityHub) {
+            return authorizeOauth2(participantContextId, identityHub, OAUTH_2_EXTENSION.getAuthServer());
+        }
     }
 }

@@ -15,9 +15,13 @@
 package org.eclipse.edc.test.e2e.sts.api;
 
 import com.nimbusds.jwt.SignedJWT;
-import org.eclipse.edc.iam.identitytrust.sts.spi.model.StsAccount;
-import org.eclipse.edc.iam.identitytrust.sts.spi.store.StsAccountStore;
+import org.eclipse.edc.iam.decentralizedclaims.sts.spi.model.StsAccount;
+import org.eclipse.edc.iam.decentralizedclaims.sts.spi.store.StsAccountStore;
+import org.eclipse.edc.identityhub.spi.keypair.model.KeyPairResource;
+import org.eclipse.edc.identityhub.spi.keypair.model.KeyPairState;
+import org.eclipse.edc.identityhub.spi.keypair.store.KeyPairResourceStore;
 import org.eclipse.edc.junit.extensions.RuntimePerClassExtension;
+import org.eclipse.edc.spi.EdcException;
 import org.eclipse.edc.spi.security.Vault;
 
 import java.text.ParseException;
@@ -25,7 +29,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 
-import static org.eclipse.edc.iam.identitytrust.sts.spi.store.fixtures.TestFunctions.createClient;
+import static org.eclipse.edc.iam.decentralizedclaims.sts.spi.store.fixtures.TestFunctions.createClient;
 
 /**
  * Base class for STS E2E tests
@@ -34,21 +38,33 @@ public abstract class StsEndToEndTestBase {
 
     protected abstract RuntimePerClassExtension getRuntime();
 
-    protected StsAccount initClient(String clientId, String clientSecret, String publicKeyRef, String did) {
+    protected StsAccount initClient(String clientId, String clientSecret, String keyAlias, String did) {
         var store = getClientStore();
         var vault = getVault();
+        var keyPairStore = getRuntime().getService(KeyPairResourceStore.class);
         var clientSecretAlias = "client_secret_alias";
-        var client = createClient(clientId, clientSecretAlias, clientId, publicKeyRef, did);
+        var client = createClient(clientId, clientSecretAlias, clientId, did);
 
-        vault.storeSecret(clientSecretAlias, clientSecret);
-        vault.storeSecret(client.getPrivateKeyAlias(), loadResourceFile("ec-privatekey.pem"));
+        var pem = loadResourceFile("ec-privatekey.pem");
+        vault.storeSecret(client.getParticipantContextId(), keyAlias, pem);
+        keyPairStore.create(KeyPairResource.Builder.newTokenSigning()
+                .id(UUID.randomUUID().toString())
+                .keyId("key1")
+                .participantContextId(client.getParticipantContextId())
+                .privateKeyAlias(keyAlias)
+                .serializedPublicKey(pem)
+                .isDefaultPair(true)
+                .state(KeyPairState.ACTIVATED.code())
+                .build()).orElseThrow(f -> new EdcException(f.getFailureDetail()));
+
+        vault.storeSecret(client.getParticipantContextId(), clientSecretAlias, clientSecret);
         store.create(client);
 
         return client;
     }
 
-    protected StsAccount initClient(String clientSecret, String publicKeyRef, String did) {
-        return initClient(UUID.randomUUID().toString(), clientSecret, publicKeyRef, did);
+    protected StsAccount initClient(String clientSecret, String keyAlias, String did) {
+        return initClient(UUID.randomUUID().toString(), clientSecret, keyAlias, did);
     }
 
     protected Map<String, Object> parseClaims(String token) {

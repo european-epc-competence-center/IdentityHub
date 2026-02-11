@@ -14,6 +14,7 @@
 
 package org.eclipse.edc.issuerservice.api.admin.credentialdefinition.v1.unstable;
 
+import jakarta.annotation.security.RolesAllowed;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.DELETE;
 import jakarta.ws.rs.GET;
@@ -25,9 +26,11 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.Context;
 import jakarta.ws.rs.core.Response;
 import jakarta.ws.rs.core.SecurityContext;
+import org.eclipse.edc.api.auth.spi.AuthorizationService;
+import org.eclipse.edc.api.auth.spi.ParticipantPrincipal;
+import org.eclipse.edc.api.auth.spi.RequiredScope;
 import org.eclipse.edc.identityhub.api.Versions;
-import org.eclipse.edc.identityhub.spi.authorization.AuthorizationService;
-import org.eclipse.edc.identityhub.spi.participantcontext.model.ParticipantContext;
+import org.eclipse.edc.identityhub.spi.participantcontext.model.IdentityHubParticipantContext;
 import org.eclipse.edc.issuerservice.api.admin.credentialdefinition.v1.unstable.model.CredentialDefinitionDto;
 import org.eclipse.edc.issuerservice.spi.issuance.credentialdefinition.CredentialDefinitionService;
 import org.eclipse.edc.issuerservice.spi.issuance.model.CredentialDefinition;
@@ -39,7 +42,7 @@ import java.util.Collection;
 
 import static jakarta.ws.rs.core.MediaType.APPLICATION_JSON;
 import static org.eclipse.edc.identityhub.spi.participantcontext.ParticipantContextId.onEncoded;
-import static org.eclipse.edc.identityhub.spi.participantcontext.model.ParticipantResource.filterByParticipantContextId;
+import static org.eclipse.edc.participantcontext.spi.types.ParticipantResource.filterByParticipantContextId;
 import static org.eclipse.edc.web.spi.exception.ServiceResultHandler.exceptionMapper;
 
 @Consumes(APPLICATION_JSON)
@@ -57,53 +60,63 @@ public class IssuerCredentialDefinitionAdminApiController implements IssuerCrede
     }
 
     @POST
+    @RequiredScope("issuer-admin-api:write")
+    @RolesAllowed({ParticipantPrincipal.ROLE_PARTICIPANT, ParticipantPrincipal.ROLE_ADMIN})
     @Override
     public Response createCredentialDefinition(@PathParam("participantContextId") String participantContextId, CredentialDefinitionDto definitionDto, @Context SecurityContext context) {
-        var decodedParticipantId = onEncoded(participantContextId).orElseThrow(InvalidRequestException::new);
-        return authorizationService.isAuthorized(context, decodedParticipantId, ParticipantContext.class)
-                .compose(u -> credentialDefinitionService.createCredentialDefinition(definitionDto.toCredentialDefinition(decodedParticipantId)))
+        var decodedParticipantContextId = onEncoded(participantContextId).orElseThrow(InvalidRequestException::new);
+        return authorizationService.authorize(context, decodedParticipantContextId, decodedParticipantContextId, IdentityHubParticipantContext.class)
+                .compose(u -> credentialDefinitionService.createCredentialDefinition(definitionDto.toCredentialDefinition(decodedParticipantContextId)))
                 .map(v -> Response.created(URI.create(Versions.UNSTABLE + "/participants/%s/credentialdefinitions/%s".formatted(participantContextId, definitionDto.getId()))).build())
                 .orElseThrow(exceptionMapper(CredentialDefinition.class, definitionDto.getId()));
     }
 
     @PUT
+    @RequiredScope("issuer-admin-api:write")
+    @RolesAllowed({ParticipantPrincipal.ROLE_PARTICIPANT, ParticipantPrincipal.ROLE_ADMIN})
     @Override
     public Response updateCredentialDefinition(@PathParam("participantContextId") String participantContextId, CredentialDefinitionDto credentialDefinition, @Context SecurityContext context) {
-        var decodedParticipantId = onEncoded(participantContextId).orElseThrow(InvalidRequestException::new);
-        return authorizationService.isAuthorized(context, credentialDefinition.getId(), CredentialDefinition.class)
-                .compose(u -> credentialDefinitionService.updateCredentialDefinition(credentialDefinition.toCredentialDefinition(decodedParticipantId)))
+        var decodedParticipantContextId = onEncoded(participantContextId).orElseThrow(InvalidRequestException::new);
+        return authorizationService.authorize(context, decodedParticipantContextId, credentialDefinition.getId(), CredentialDefinition.class)
+                .compose(u -> credentialDefinitionService.updateCredentialDefinition(credentialDefinition.toCredentialDefinition(decodedParticipantContextId)))
                 .map(v -> Response.ok().build())
                 .orElseThrow(exceptionMapper(CredentialDefinition.class, credentialDefinition.getId()));
     }
 
     @GET
+    @RequiredScope("issuer-admin-api:read")
+    @RolesAllowed({ParticipantPrincipal.ROLE_PARTICIPANT, ParticipantPrincipal.ROLE_ADMIN})
     @Path("/{credentialDefinitionId}")
     @Override
     public CredentialDefinition getCredentialDefinitionById(@PathParam("participantContextId") String participantContextId, @PathParam("credentialDefinitionId") String credentialDefinitionId, @Context SecurityContext context) {
-        return authorizationService.isAuthorized(context, credentialDefinitionId, CredentialDefinition.class)
+        return authorizationService.authorize(context, onEncoded(participantContextId).orElseThrow(InvalidRequestException::new), credentialDefinitionId, CredentialDefinition.class)
                 .compose(u -> credentialDefinitionService.findCredentialDefinitionById(credentialDefinitionId))
                 .orElseThrow(exceptionMapper(CredentialDefinition.class, credentialDefinitionId));
     }
 
     @POST
+    @RequiredScope("issuer-admin-api:read")
+    @RolesAllowed({ParticipantPrincipal.ROLE_PARTICIPANT, ParticipantPrincipal.ROLE_ADMIN})
     @Path("/query")
     @Override
     public Collection<CredentialDefinition> queryCredentialDefinitions(@PathParam("participantContextId") String participantContextId, QuerySpec querySpec, @Context SecurityContext context) {
-        var decodedParticipantId = onEncoded(participantContextId).orElseThrow(InvalidRequestException::new);
-        var spec = querySpec.toBuilder().filter(filterByParticipantContextId(decodedParticipantId)).build();
+        var decodedParticipantContextId = onEncoded(participantContextId).orElseThrow(InvalidRequestException::new);
+        var spec = querySpec.toBuilder().filter(filterByParticipantContextId(decodedParticipantContextId)).build();
         var definitions = credentialDefinitionService.queryCredentialDefinitions(spec)
                 .orElseThrow(exceptionMapper(CredentialDefinition.class, null));
 
         return definitions.stream()
-                .filter(definition -> authorizationService.isAuthorized(context, definition.getId(), CredentialDefinition.class).succeeded())
+                .filter(definition -> authorizationService.authorize(context, decodedParticipantContextId, definition.getId(), CredentialDefinition.class).succeeded())
                 .toList();
     }
 
     @DELETE
+    @RequiredScope("issuer-admin-api:write")
+    @RolesAllowed({ParticipantPrincipal.ROLE_PARTICIPANT, ParticipantPrincipal.ROLE_ADMIN})
     @Path("/{credentialDefinitionId}")
     @Override
     public void deleteCredentialDefinitionById(@PathParam("participantContextId") String participantContextId, @PathParam("credentialDefinitionId") String credentialDefinitionId, @Context SecurityContext context) {
-        authorizationService.isAuthorized(context, credentialDefinitionId, CredentialDefinition.class)
+        authorizationService.authorize(context, onEncoded(participantContextId).orElseThrow(InvalidRequestException::new), credentialDefinitionId, CredentialDefinition.class)
                 .compose(u -> credentialDefinitionService.deleteCredentialDefinition(credentialDefinitionId))
                 .orElseThrow(exceptionMapper(CredentialDefinition.class, credentialDefinitionId));
     }

@@ -21,25 +21,32 @@ import org.eclipse.edc.iam.verifiablecredentials.spi.model.RevocationServiceRegi
 import org.eclipse.edc.identityhub.spi.credential.request.model.HolderCredentialRequest;
 import org.eclipse.edc.identityhub.spi.credential.request.model.HolderRequestState;
 import org.eclipse.edc.identityhub.spi.credential.request.store.HolderCredentialRequestStore;
-import org.eclipse.edc.identityhub.spi.participantcontext.ParticipantContextService;
+import org.eclipse.edc.identityhub.spi.participantcontext.IdentityHubParticipantContextService;
 import org.eclipse.edc.identityhub.spi.participantcontext.model.CreateParticipantContextResponse;
 import org.eclipse.edc.identityhub.spi.participantcontext.model.KeyDescriptor;
+import org.eclipse.edc.identityhub.spi.participantcontext.model.KeyPairUsage;
 import org.eclipse.edc.identityhub.spi.participantcontext.model.ParticipantManifest;
 import org.eclipse.edc.identityhub.spi.transformation.ScopeToCriterionTransformer;
-import org.eclipse.edc.identityhub.tests.fixtures.credentialservice.IdentityHubExtension;
-import org.eclipse.edc.identityhub.tests.fixtures.credentialservice.IdentityHubRuntime;
-import org.eclipse.edc.junit.annotations.EndToEndTest;
+import org.eclipse.edc.identityhub.tests.fixtures.DefaultRuntimes;
+import org.eclipse.edc.identityhub.tests.fixtures.credentialservice.IdentityHub;
+import org.eclipse.edc.junit.extensions.ComponentRuntimeExtension;
+import org.eclipse.edc.junit.extensions.RuntimeExtension;
+import org.eclipse.edc.junit.utils.Endpoints;
 import org.eclipse.edc.spi.monitor.ConsoleMonitor;
 import org.eclipse.edc.spi.security.Vault;
+import org.eclipse.edc.test.e2e.tck.TckTest;
 import org.eclipse.edc.test.e2e.tck.TckTransformer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
 import org.testcontainers.containers.GenericContainer;
+import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.net.URI;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -50,19 +57,30 @@ import static org.eclipse.edc.identityhub.verifiablecredentials.testfixtures.Ver
 import static org.eclipse.edc.util.io.Ports.getFreePort;
 import static org.mockito.Mockito.mock;
 
-@EndToEndTest
+@TckTest
+@Testcontainers
 public class DcpIssuanceFlowWithDockerTest {
     private static final String ISSUANCE_CORRELATION_ID = "issuance-correlation-id";
     private static final String TEST_PARTICIPANT_CONTEXT_ID = "holder";
     private static final RevocationServiceRegistry REVOCATION_LIST_REGISTRY = mock();
     private static final int CALLBACK_PORT = getFreePort();
     private static final ScopeToCriterionTransformer TCK_TRANSFORMER = new TckTransformer();
+    private static final Endpoints ENDPOINTS = Endpoints.Builder.newInstance()
+            .endpoint("credentials", () -> URI.create("http://host.docker.internal:" + getFreePort() + "/api/credentials"))
+            .endpoint("sts", () -> URI.create("http://host.docker.internal:" + getFreePort() + "/api/sts"))
+            .endpoint("issuance", () -> URI.create("http://host.docker.internal:" + getFreePort() + "/api/issuance"))
+            .endpoint("statuslist", () -> URI.create("http://host.docker.internal:" + getFreePort() + "/api/identity"))
+            .endpoint("identity", () -> URI.create("http://host.docker.internal:" + getFreePort() + "/api/statuslist"))
+            .endpoint("did", () -> URI.create("http://host.docker.internal:" + getFreePort() + "/"))
+            .build();
+
     @RegisterExtension
-    static final IdentityHubExtension IDENTITY_HUB_EXTENSION = (IdentityHubExtension) IdentityHubExtension.Builder.newInstance()
+    static final RuntimeExtension IDENTITY_HUB_EXTENSION = ComponentRuntimeExtension.Builder.newInstance()
             .name("identity-hub")
-            .id("identity-hub")
-            .modules(":dist:bom:identityhub-bom")
-            .host("host.docker.internal")
+            .modules(DefaultRuntimes.IdentityHub.MODULES)
+            .endpoints(ENDPOINTS)
+            .configurationProvider(DefaultRuntimes.IdentityHub::config)
+            .paramProvider(IdentityHub.class, IdentityHub::forContext)
             .build()
             .registerServiceMock(ScopeToCriterionTransformer.class, TCK_TRANSFORMER)
             .registerServiceMock(RevocationServiceRegistry.class, REVOCATION_LIST_REGISTRY);
@@ -71,9 +89,9 @@ public class DcpIssuanceFlowWithDockerTest {
     private ECKey holderKey;
 
     @BeforeEach
-    void setup(HolderCredentialRequestStore requestStore) {
+    void setup(IdentityHub identityHub, HolderCredentialRequestStore requestStore) {
 
-        holderDid = IDENTITY_HUB_EXTENSION.didFor(TEST_PARTICIPANT_CONTEXT_ID);
+        holderDid = identityHub.didFor(TEST_PARTICIPANT_CONTEXT_ID);
         holderKey = generateEcKey(holderDid + "#key1");
 
         // fake credentials
@@ -90,25 +108,28 @@ public class DcpIssuanceFlowWithDockerTest {
 
     @DisplayName("Run TCK Issuance Flow tests (using docker)")
     @Test
-    void runIssuanceFlowTests(IdentityHubRuntime runtime) throws InterruptedException {
+    void runIssuanceFlowTests(IdentityHub identityHub) throws InterruptedException {
 
         var monitor = new ConsoleMonitor("TCK", ConsoleMonitor.Level.DEBUG, true);
-        var credentialsPort = IDENTITY_HUB_EXTENSION.getCredentialsEndpoint().getUrl().getPort();
-        var credentialsPath = IDENTITY_HUB_EXTENSION.getCredentialsEndpoint().getUrl().getPath();
+        var credentialsPort = identityHub.getCredentialsEndpoint().getUrl().getPort();
+        var credentialsPath = identityHub.getCredentialsEndpoint().getUrl().getPath();
 
-        var stsPort = IDENTITY_HUB_EXTENSION.getStsEndpoint().getUrl().getPort();
-        var stsPath = IDENTITY_HUB_EXTENSION.getStsEndpoint().getUrl().getPath();
+        var stsPort = identityHub.getStsEndpoint().getUrl().getPort();
+        var stsPath = identityHub.getStsEndpoint().getUrl().getPath();
 
         var baseCallbackAddress = "http://0.0.0.0:%s".formatted(CALLBACK_PORT);
         var baseCredentialServiceUrl = "http://host.docker.internal:%s%s/v1/participants/%s".formatted(credentialsPort, credentialsPath, Base64.encode(TEST_PARTICIPANT_CONTEXT_ID));
+        var baseCallbackUri = URI.create(baseCallbackAddress);
 
-        var response = createParticipant(runtime, baseCredentialServiceUrl);
+        var response = createParticipant(identityHub, baseCredentialServiceUrl);
 
-        try (var tckContainer = new GenericContainer<>("eclipsedataspacetck/dcp-tck-runtime:latest")
+        try (var tckContainer = new GenericContainer<>("eclipsedataspacetck/dcp-tck-runtime:1.0.0-RC3")
                 .withExtraHost("host.docker.internal", "host-gateway")
                 .withExposedPorts(CALLBACK_PORT)
                 .withEnv(Map.of(
                         "dataspacetck.callback.address", baseCallbackAddress,
+                        "dataspacetck.host", baseCallbackUri.getHost(),
+                        "dataspacetck.port", String.valueOf(baseCallbackUri.getPort()),
                         "dataspacetck.launcher", "org.eclipse.dataspacetck.dcp.system.DcpSystemLauncher",
                         "dataspacetck.did.holder", holderDid,
                         "dataspacetck.sts.url", "http://host.docker.internal:%s%s".formatted(stsPort, stsPath),
@@ -138,18 +159,19 @@ public class DcpIssuanceFlowWithDockerTest {
         }
     }
 
-    private CreateParticipantContextResponse createParticipant(IdentityHubRuntime runtime, String credentialServiceUrl) {
-        var service = runtime.getService(ParticipantContextService.class);
-        var vault = runtime.getService(Vault.class);
+    private CreateParticipantContextResponse createParticipant(IdentityHub identityHub, String credentialServiceUrl) {
+        var service = identityHub.getService(IdentityHubParticipantContextService.class);
+        var vault = identityHub.getService(Vault.class);
 
         var privateKeyAlias = "%s-privatekey-alias".formatted(TEST_PARTICIPANT_CONTEXT_ID);
-        vault.storeSecret(privateKeyAlias, holderKey.toJSONString());
+        vault.storeSecret(TEST_PARTICIPANT_CONTEXT_ID, privateKeyAlias, holderKey.toJSONString());
         var manifest = ParticipantManifest.Builder.newInstance()
-                .participantId(TEST_PARTICIPANT_CONTEXT_ID)
+                .participantContextId(TEST_PARTICIPANT_CONTEXT_ID)
                 .did(holderDid)
                 .active(true)
                 .serviceEndpoint(new Service(UUID.randomUUID().toString(), "CredentialService", credentialServiceUrl))
                 .key(KeyDescriptor.Builder.newInstance()
+                        .usage(Set.of(KeyPairUsage.PRESENTATION_SIGNING))
                         .publicKeyJwk(holderKey.toPublicJWK().toJSONObject())
                         .privateKeyAlias(privateKeyAlias)
                         .keyId(holderKey.getKeyID())

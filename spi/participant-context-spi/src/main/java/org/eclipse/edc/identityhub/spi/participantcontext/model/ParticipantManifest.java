@@ -15,9 +15,11 @@
 package org.eclipse.edc.identityhub.spi.participantcontext.model;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonFormat;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.fasterxml.jackson.databind.annotation.JsonPOJOBuilder;
 import org.eclipse.edc.iam.did.spi.document.Service;
+import org.eclipse.edc.participantcontext.spi.types.ParticipantContextState;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -29,17 +31,18 @@ import java.util.Set;
 import static java.util.Optional.ofNullable;
 
 /**
- * Manifest (=recipe) for creating the {@link ParticipantContext}.
+ * Manifest (=recipe) for creating the {@link IdentityHubParticipantContext}.
  */
 @JsonDeserialize(builder = ParticipantManifest.Builder.class)
 public class ParticipantManifest {
+    private Set<KeyDescriptor> keys = new HashSet<>();
     private Map<String, Object> additionalProperties = new HashMap<>();
     private List<String> roles = new ArrayList<>();
     private Set<Service> serviceEndpoints = new HashSet<>();
     private boolean isActive;
-    private String participantId;
+    private String participantContextId;
     private String did;
-    private KeyDescriptor key;
+    private String apiKeyAlias;
 
     private ParticipantManifest() {
     }
@@ -49,7 +52,7 @@ public class ParticipantManifest {
     }
 
     public String clientSecretAlias() {
-        return ofNullable(additionalProperties.get("clientSecret")).map(Object::toString).orElseGet(() -> participantId + "-sts-client-secret");
+        return ofNullable(additionalProperties.get("clientSecret")).map(Object::toString).orElseGet(() -> participantContextId + "-sts-client-secret");
     }
 
     /**
@@ -68,17 +71,17 @@ public class ParticipantManifest {
     }
 
     /**
-     * The DSP {@code participantId} of this participant. This must be a unique and stable ID.
+     * The ID of the participant context. It is different from the stable DSP - dataspace ID or a DID. This could be a random ID.
      */
-    public String getParticipantId() {
-        return participantId;
+    public String getParticipantContextId() {
+        return participantContextId;
     }
 
     /**
      * Key material that is to be associated with this participant. May not be null.
      */
-    public KeyDescriptor getKey() {
-        return key;
+    public Set<KeyDescriptor> getKeys() {
+        return keys;
     }
 
     /**
@@ -95,6 +98,10 @@ public class ParticipantManifest {
 
     public Object getProperty(String key) {
         return additionalProperties.get(key);
+    }
+
+    public String getApiKeyAlias() {
+        return apiKeyAlias;
     }
 
     @JsonPOJOBuilder(withPrefix = "")
@@ -126,13 +133,19 @@ public class ParticipantManifest {
             return this;
         }
 
-        public Builder participantId(String participantId) {
-            manifest.participantId = participantId;
+        public Builder participantContextId(String participantContextId) {
+            manifest.participantContextId = participantContextId;
             return this;
         }
 
         public Builder key(KeyDescriptor key) {
-            manifest.key = key;
+            manifest.keys.add(key);
+            return this;
+        }
+
+        @JsonFormat(with = JsonFormat.Feature.ACCEPT_SINGLE_VALUE_AS_ARRAY)
+        public Builder keys(Set<KeyDescriptor> keys) {
+            manifest.keys = keys;
             return this;
         }
 
@@ -153,6 +166,11 @@ public class ParticipantManifest {
 
         public Builder additionalProperties(Map<String, Object> properties) {
             manifest.additionalProperties = properties;
+            return this;
+        }
+
+        public Builder apiKeyAlias(String apiKeyAlias) {
+            manifest.apiKeyAlias = apiKeyAlias;
             return this;
         }
 

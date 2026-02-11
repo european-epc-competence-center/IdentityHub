@@ -16,9 +16,9 @@
 package org.eclipse.edc.identityhub.core;
 
 import org.eclipse.edc.http.spi.EdcHttpClient;
+import org.eclipse.edc.iam.decentralizedclaims.spi.verification.SignatureSuiteRegistry;
 import org.eclipse.edc.iam.did.spi.resolution.DidPublicKeyResolver;
 import org.eclipse.edc.iam.did.spi.resolution.DidResolverRegistry;
-import org.eclipse.edc.iam.identitytrust.spi.verification.SignatureSuiteRegistry;
 import org.eclipse.edc.iam.verifiablecredentials.spi.model.CredentialFormat;
 import org.eclipse.edc.iam.verifiablecredentials.spi.model.RevocationServiceRegistry;
 import org.eclipse.edc.identityhub.core.services.query.CredentialQueryResolverImpl;
@@ -40,7 +40,7 @@ import org.eclipse.edc.identityhub.spi.credential.request.store.HolderCredential
 import org.eclipse.edc.identityhub.spi.keypair.KeyPairService;
 import org.eclipse.edc.identityhub.spi.keypair.store.KeyPairResourceStore;
 import org.eclipse.edc.identityhub.spi.model.IdentityHubConstants;
-import org.eclipse.edc.identityhub.spi.participantcontext.ParticipantContextService;
+import org.eclipse.edc.identityhub.spi.participantcontext.IdentityHubParticipantContextService;
 import org.eclipse.edc.identityhub.spi.transformation.ScopeToCriterionTransformer;
 import org.eclipse.edc.identityhub.spi.verifiablecredentials.CredentialRequestManager;
 import org.eclipse.edc.identityhub.spi.verifiablecredentials.CredentialStatusCheckService;
@@ -127,7 +127,7 @@ public class CoreServicesExtension implements ServiceExtension {
     @Inject
     private LocalPublicKeyService fallbackService;
     @Inject
-    private ParticipantContextService participantContextService;
+    private IdentityHubParticipantContextService participantContextService;
     @Inject
     private JwsSignerProvider jwsSignerProvider;
     @Inject
@@ -166,6 +166,11 @@ public class CoreServicesExtension implements ServiceExtension {
     @Override
     public void start() {
         credentialRequestService.start();
+    }
+
+    @Override
+    public void shutdown() {
+        credentialRequestService.stop();
     }
 
     @Provider

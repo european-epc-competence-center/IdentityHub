@@ -16,11 +16,11 @@
 package org.eclipse.edc.identityhub.core.services.verifiablepresentation;
 
 import jakarta.json.JsonObject;
-import org.eclipse.edc.iam.identitytrust.spi.model.PresentationResponseMessage;
+import org.eclipse.edc.iam.decentralizedclaims.spi.model.PresentationResponseMessage;
 import org.eclipse.edc.iam.verifiablecredentials.spi.model.CredentialFormat;
 import org.eclipse.edc.iam.verifiablecredentials.spi.model.VerifiableCredentialContainer;
 import org.eclipse.edc.iam.verifiablecredentials.spi.model.presentationdefinition.PresentationDefinition;
-import org.eclipse.edc.identityhub.spi.participantcontext.model.ParticipantContext;
+import org.eclipse.edc.identityhub.spi.participantcontext.model.IdentityHubParticipantContext;
 import org.eclipse.edc.identityhub.spi.verifiablecredentials.generator.PresentationCreatorRegistry;
 import org.eclipse.edc.identityhub.spi.verifiablecredentials.generator.VerifiablePresentationService;
 import org.eclipse.edc.spi.monitor.Monitor;
@@ -54,11 +54,11 @@ public class VerifiablePresentationServiceImpl implements VerifiablePresentation
     }
 
     /**
-     * Creates a presentation based on the given list of verifiable credentials and optional presentation definition. If the desired format ist {@link CredentialFormat#JSON_LD},
+     * Creates a presentation based on the given list of verifiable credentials and optional presentation definition. If the desired format ist {@link CredentialFormat#VC1_0_LD},
      * all JWT-VCs in the list will be packaged in a separate JWT VP, because LDP-VPs cannot contain JWT-VCs.
      * <em>Note: submitting a {@link PresentationDefinition} is not supported at the moment, and it will be ignored after logging a warning. </em>
      *
-     * @param participantContextId   The ID of the {@link ParticipantContext} for which the VP is to be generated
+     * @param participantContextId   The ID of the {@link IdentityHubParticipantContext} for which the VP is to be generated
      * @param credentials            The list of verifiable credentials to include in the presentation.
      * @param presentationDefinition The optional presentation definition. <em>Not supported at the moment!</em>
      * @param audience               The Participant ID of the entity who the VP is intended for. May be null for some VP formats.

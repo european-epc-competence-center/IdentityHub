@@ -26,7 +26,7 @@ public class BaseSqlDialectStatements implements KeyPairResourceStoreStatements 
     public String getInsertTemplate() {
         return executeStatement()
                 .column(getIdColumn())
-                .column(getParticipantIdColumn())
+                .column(getParticipantContextIdColumn())
                 .column(getTimestampColumn())
                 .column(getKeyIdColumn())
                 .column(getGroupNameColumn())
@@ -37,6 +37,7 @@ public class BaseSqlDialectStatements implements KeyPairResourceStoreStatements 
                 .column(getPrivateKeyAliasColumn())
                 .column(getStateColumn())
                 .column(getKeyContextColumn())
+                .column(getUsageColumn())
                 .insertInto(getTableName());
     }
 
@@ -44,7 +45,7 @@ public class BaseSqlDialectStatements implements KeyPairResourceStoreStatements 
     public String getUpdateTemplate() {
         return executeStatement()
                 .column(getIdColumn())
-                .column(getParticipantIdColumn())
+                .column(getParticipantContextIdColumn())
                 .column(getTimestampColumn())
                 .column(getKeyIdColumn())
                 .column(getGroupNameColumn())
@@ -55,6 +56,7 @@ public class BaseSqlDialectStatements implements KeyPairResourceStoreStatements 
                 .column(getPrivateKeyAliasColumn())
                 .column(getStateColumn())
                 .column(getKeyContextColumn())
+                .column(getUsageColumn())
                 .update(getTableName(), getIdColumn());
     }
 

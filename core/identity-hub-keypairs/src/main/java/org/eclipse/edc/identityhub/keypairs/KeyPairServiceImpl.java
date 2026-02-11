@@ -19,12 +19,12 @@ import org.eclipse.edc.identityhub.spi.keypair.events.KeyPairObservable;
 import org.eclipse.edc.identityhub.spi.keypair.model.KeyPairResource;
 import org.eclipse.edc.identityhub.spi.keypair.model.KeyPairState;
 import org.eclipse.edc.identityhub.spi.keypair.store.KeyPairResourceStore;
-import org.eclipse.edc.identityhub.spi.participantcontext.events.ParticipantContextCreated;
 import org.eclipse.edc.identityhub.spi.participantcontext.events.ParticipantContextDeleted;
+import org.eclipse.edc.identityhub.spi.participantcontext.model.IdentityHubParticipantContext;
 import org.eclipse.edc.identityhub.spi.participantcontext.model.KeyDescriptor;
-import org.eclipse.edc.identityhub.spi.participantcontext.model.ParticipantContext;
-import org.eclipse.edc.identityhub.spi.participantcontext.model.ParticipantContextState;
-import org.eclipse.edc.identityhub.spi.participantcontext.store.ParticipantContextStore;
+import org.eclipse.edc.identityhub.spi.participantcontext.model.KeyPairUsage;
+import org.eclipse.edc.participantcontext.spi.store.ParticipantContextStore;
+import org.eclipse.edc.participantcontext.spi.types.ParticipantContextState;
 import org.eclipse.edc.security.token.jwt.CryptoConverter;
 import org.eclipse.edc.spi.event.Event;
 import org.eclipse.edc.spi.event.EventEnvelope;
@@ -49,9 +49,10 @@ import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
-import static org.eclipse.edc.identityhub.spi.participantcontext.model.ParticipantContextState.ACTIVATED;
-import static org.eclipse.edc.identityhub.spi.participantcontext.model.ParticipantContextState.CREATED;
-import static org.eclipse.edc.identityhub.spi.participantcontext.model.ParticipantResource.queryByParticipantContextId;
+import static org.eclipse.edc.participantcontext.spi.types.ParticipantContextState.ACTIVATED;
+import static org.eclipse.edc.participantcontext.spi.types.ParticipantContextState.CREATED;
+import static org.eclipse.edc.participantcontext.spi.types.ParticipantResource.queryByParticipantContextId;
+import static org.eclipse.edc.spi.result.ServiceResult.success;
 
 public class KeyPairServiceImpl implements KeyPairService, EventSubscriber {
     private final KeyPairResourceStore keyPairResourceStore;
@@ -81,7 +82,7 @@ public class KeyPairServiceImpl implements KeyPairService, EventSubscriber {
                 return result.mapEmpty();
             }
 
-            var key = generateOrGetKey(keyDescriptor);
+            var key = generateOrGetKey(participantContextId, keyDescriptor);
             if (key.failed()) {
                 return ServiceResult.badRequest(key.getFailureDetail());
             }
@@ -101,6 +102,7 @@ public class KeyPairServiceImpl implements KeyPairService, EventSubscriber {
             }
 
             var newResource = KeyPairResource.Builder.newInstance()
+                    .usage(keyDescriptor.getUsage())
                     .id(keyDescriptor.getResourceId())
                     .keyId(keyDescriptor.getKeyId())
                     .state(keyDescriptor.isActive() ? KeyPairState.ACTIVATED : KeyPairState.CREATED)
@@ -118,7 +120,7 @@ public class KeyPairServiceImpl implements KeyPairService, EventSubscriber {
                         if (keyDescriptor.isActive()) {
                             return activateKeyPair(newResource);
                         }
-                        return ServiceResult.success();
+                        return success();
                     });
         });
     }
@@ -136,7 +138,7 @@ public class KeyPairServiceImpl implements KeyPairService, EventSubscriber {
 
             // deactivate the old key
             var oldAlias = oldKey.getPrivateKeyAlias();
-            vault.deleteSecret(oldAlias);
+            vault.deleteSecret(oldKey.getParticipantContextId(), oldAlias);
             oldKey.rotate(duration);
             var updateResult = ServiceResult.from(keyPairResourceStore.update(oldKey))
                     .onSuccess(v -> observable.invokeForEach(l -> l.rotated(oldKey, newKeyDesc)));
@@ -162,7 +164,7 @@ public class KeyPairServiceImpl implements KeyPairService, EventSubscriber {
 
             // deactivate the old key
             var oldAlias = oldKey.getPrivateKeyAlias();
-            vault.deleteSecret(oldAlias);
+            vault.deleteSecret(oldKey.getParticipantContextId(), oldAlias);
             oldKey.revoke();
             var updateResult = ServiceResult.from(keyPairResourceStore.update(oldKey))
                     .onSuccess(v -> observable.invokeForEach(l -> l.revoked(oldKey, newKeyDesc)));
@@ -193,6 +195,39 @@ public class KeyPairServiceImpl implements KeyPairService, EventSubscriber {
     }
 
     @Override
+    public ServiceResult<KeyPairResource> getActiveKeyPairForUsage(String participantContextId, KeyPairUsage usage) {
+        return transactionContext.execute(() -> {
+            var query = queryByParticipantContextId(participantContextId)
+                    .filter(new Criterion("state", "=", KeyPairState.ACTIVATED.code()))
+                    .build();
+
+
+            var keyPairResult = keyPairResourceStore.query(query);
+            if (keyPairResult.failed()) {
+                return ServiceResult.unexpected("Error obtaining private key for participant '%s': %s".formatted(participantContextId, keyPairResult.getFailureDetail()));
+            }
+
+
+            var keyPairs = keyPairResult.getContent().stream().filter(kp -> kp.getUsage().contains(usage)).toList();
+            // check if there is a default key pair
+            ServiceResult<KeyPairResource> selectedKeyPairResult;
+            if (keyPairs.size() > 1) {
+                selectedKeyPairResult = keyPairs.stream()
+                        .filter(KeyPairResource::isDefaultPair)
+                        .findAny()
+                        .map(ServiceResult::success) // find the default key
+                        .orElse(ServiceResult.badRequest("Multiple key-pairs found for signing credentials, but none was marked as 'default'"));
+            } else { //skip check for
+                selectedKeyPairResult = keyPairs.stream().findFirst()
+                        .map(ServiceResult::success)
+                        .orElse(ServiceResult.notFound("No active key pair found for participant '%s' with usage '%s'".formatted(participantContextId, usage.name())));
+            }
+
+            return selectedKeyPairResult;
+        });
+    }
+
+    @Override
     public <E extends Event> void on(EventEnvelope<E> eventEnvelope) {
         var payload = eventEnvelope.getPayload();
         if (payload instanceof ParticipantContextDeleted deleted) {
@@ -203,7 +238,7 @@ public class KeyPairServiceImpl implements KeyPairService, EventSubscriber {
     }
 
     /**
-     * checks if the participant exists, and that its {@link ParticipantContext#getState()} flag matches either of the given states
+     * checks if the participant exists, and that its {@link IdentityHubParticipantContext#getState()} flag matches either of the given states
      *
      * @param participantContextId the ParticipantContext ID of the participant context
      * @param allowedStates        a (possible empty) list of allowed states a participant may be in for a particular operation.
@@ -218,7 +253,7 @@ public class KeyPairServiceImpl implements KeyPairService, EventSubscriber {
                                 return ServiceResult.badRequest("To add a key pair, the ParticipantContext with ID '%s' must be in state %s or %s but was %s."
                                         .formatted(participantContextId, ACTIVATED, CREATED, state));
                             }
-                            return ServiceResult.success();
+                            return success();
                         })
                         .orElse(ServiceResult.notFound("No ParticipantContext with ID '%s' was found.".formatted(participantContextId))));
         return result.mapEmpty();
@@ -233,11 +268,6 @@ public class KeyPairServiceImpl implements KeyPairService, EventSubscriber {
 
         return ServiceResult.from(keyPairResourceStore.update(existingKeyPair)
                 .onSuccess(u -> observable.invokeForEach(l -> l.activated(existingKeyPair, existingKeyPair.getKeyContext()))));
-    }
-
-    private void created(ParticipantContextCreated event) {
-        addKeyPair(event.getParticipantContextId(), event.getManifest().getKey(), true)
-                .onFailure(f -> monitor.warning("Adding the key pair to a new ParticipantContext failed: %s".formatted(f.getFailureDetail())));
     }
 
     private void deleted(ParticipantContextDeleted event) {
@@ -267,7 +297,7 @@ public class KeyPairServiceImpl implements KeyPairService, EventSubscriber {
         return keyPairResourceStore.query(q).map(list -> list.stream().findFirst().orElse(null)).orElse(f -> null);
     }
 
-    private Result<String> generateOrGetKey(KeyDescriptor keyDescriptor) {
+    private Result<String> generateOrGetKey(String participantContextId, KeyDescriptor keyDescriptor) {
         String publicKeySerialized;
         if (keyDescriptor.getKeyGeneratorParams() != null) {
             var keyPair = KeyPairGenerator.generateKeyPair(keyDescriptor.getKeyGeneratorParams());
@@ -276,7 +306,7 @@ public class KeyPairServiceImpl implements KeyPairService, EventSubscriber {
             }
             var privateJwk = CryptoConverter.createJwk(keyPair.getContent(), keyDescriptor.getKeyId());
             publicKeySerialized = privateJwk.toPublicJWK().toJSONString();
-            vault.storeSecret(keyDescriptor.getPrivateKeyAlias(), privateJwk.toJSONString());
+            vault.storeSecret(participantContextId, keyDescriptor.getPrivateKeyAlias(), privateJwk.toJSONString());
         } else {
             // either take the public key from the JWK structure or the PEM field
             publicKeySerialized = Optional.ofNullable(keyDescriptor.getPublicKeyJwk())

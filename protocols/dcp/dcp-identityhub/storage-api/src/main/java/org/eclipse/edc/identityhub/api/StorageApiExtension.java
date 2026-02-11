@@ -15,14 +15,14 @@
 package org.eclipse.edc.identityhub.api;
 
 import jakarta.json.Json;
-import org.eclipse.edc.iam.identitytrust.transform.to.JwtToVerifiableCredentialTransformer;
+import org.eclipse.edc.iam.decentralizedclaims.transform.to.JwtToVerifiableCredentialTransformer;
 import org.eclipse.edc.identityhub.api.storage.StorageApiController;
 import org.eclipse.edc.identityhub.api.validation.CredentialMessageValidator;
 import org.eclipse.edc.identityhub.protocols.dcp.spi.DcpIssuerTokenVerifier;
 import org.eclipse.edc.identityhub.protocols.dcp.transform.from.JsonObjectFromCredentialMessageTransformer;
 import org.eclipse.edc.identityhub.protocols.dcp.transform.from.JsonObjectFromCredentialRequestMessageTransformer;
 import org.eclipse.edc.identityhub.protocols.dcp.transform.to.JsonObjectToCredentialMessageTransformer;
-import org.eclipse.edc.identityhub.spi.participantcontext.ParticipantContextService;
+import org.eclipse.edc.identityhub.spi.participantcontext.IdentityHubParticipantContextService;
 import org.eclipse.edc.identityhub.spi.verifiablecredentials.generator.CredentialWriter;
 import org.eclipse.edc.jsonld.spi.JsonLd;
 import org.eclipse.edc.runtime.metamodel.annotation.Extension;
@@ -39,7 +39,7 @@ import org.eclipse.edc.web.spi.WebService;
 
 import java.util.Map;
 
-import static org.eclipse.edc.iam.identitytrust.spi.DcpConstants.DSPACE_DCP_NAMESPACE_V_1_0;
+import static org.eclipse.edc.iam.decentralizedclaims.spi.DcpConstants.DSPACE_DCP_NAMESPACE_V_1_0;
 import static org.eclipse.edc.identityhub.api.StorageApiExtension.NAME;
 import static org.eclipse.edc.identityhub.protocols.dcp.spi.DcpConstants.DCP_SCOPE_V_1_0;
 import static org.eclipse.edc.identityhub.protocols.dcp.spi.model.CredentialMessage.CREDENTIAL_MESSAGE_TERM;
@@ -69,7 +69,7 @@ public class StorageApiExtension implements ServiceExtension {
     private Monitor monitor;
 
     @Inject
-    private ParticipantContextService participantContextService;
+    private IdentityHubParticipantContextService participantContextService;
 
     @Override
     public String name() {

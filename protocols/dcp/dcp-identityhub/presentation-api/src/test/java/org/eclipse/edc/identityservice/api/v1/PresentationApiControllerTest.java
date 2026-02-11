@@ -17,14 +17,14 @@ package org.eclipse.edc.identityservice.api.v1;
 import com.nimbusds.jwt.JWTClaimsSet;
 import jakarta.json.Json;
 import jakarta.json.JsonObject;
-import org.eclipse.edc.iam.identitytrust.spi.model.PresentationQueryMessage;
-import org.eclipse.edc.iam.identitytrust.spi.model.PresentationResponseMessage;
+import org.eclipse.edc.iam.decentralizedclaims.spi.model.PresentationQueryMessage;
+import org.eclipse.edc.iam.decentralizedclaims.spi.model.PresentationResponseMessage;
 import org.eclipse.edc.iam.verifiablecredentials.spi.model.credentialservice.InputDescriptorMapping;
 import org.eclipse.edc.iam.verifiablecredentials.spi.model.credentialservice.PresentationSubmission;
 import org.eclipse.edc.iam.verifiablecredentials.spi.model.presentationdefinition.PresentationDefinition;
 import org.eclipse.edc.identityhub.api.verifiablecredential.PresentationApiController;
-import org.eclipse.edc.identityhub.spi.participantcontext.ParticipantContextService;
-import org.eclipse.edc.identityhub.spi.participantcontext.model.ParticipantContext;
+import org.eclipse.edc.identityhub.spi.participantcontext.IdentityHubParticipantContextService;
+import org.eclipse.edc.identityhub.spi.participantcontext.model.IdentityHubParticipantContext;
 import org.eclipse.edc.identityhub.spi.verifiablecredentials.generator.VerifiablePresentationService;
 import org.eclipse.edc.identityhub.spi.verifiablecredentials.resolution.CredentialQueryResolver;
 import org.eclipse.edc.identityhub.spi.verifiablecredentials.resolution.QueryResult;
@@ -60,9 +60,9 @@ import java.util.stream.Stream;
 import static jakarta.json.Json.createObjectBuilder;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.eclipse.edc.iam.identitytrust.spi.DcpConstants.DSPACE_DCP_NAMESPACE_V_0_8;
-import static org.eclipse.edc.iam.identitytrust.spi.DcpConstants.DSPACE_DCP_NAMESPACE_V_1_0;
-import static org.eclipse.edc.iam.identitytrust.spi.model.PresentationQueryMessage.PRESENTATION_QUERY_MESSAGE_TERM;
+import static org.eclipse.edc.iam.decentralizedclaims.spi.DcpConstants.DSPACE_DCP_NAMESPACE_V_0_8;
+import static org.eclipse.edc.iam.decentralizedclaims.spi.DcpConstants.DSPACE_DCP_NAMESPACE_V_1_0;
+import static org.eclipse.edc.iam.decentralizedclaims.spi.model.PresentationQueryMessage.PRESENTATION_QUERY_MESSAGE_TERM;
 import static org.eclipse.edc.identityhub.protocols.dcp.spi.DcpConstants.DCP_SCOPE_V_0_8;
 import static org.eclipse.edc.identityhub.protocols.dcp.spi.DcpConstants.DCP_SCOPE_V_1_0;
 import static org.eclipse.edc.identityhub.verifiablecredentials.testfixtures.VerifiableCredentialTestUtil.buildSignedJwt;
@@ -90,9 +90,10 @@ class PresentationApiControllerTest extends RestControllerTestBase {
     private final SelfIssuedTokenVerifier selfIssuedTokenVerifier = mock();
     private final VerifiablePresentationService generator = mock();
     private final JsonLd jsonLd = mock();
-    private final ParticipantContextService participantContextService = mock(a -> ServiceResult.success(ParticipantContext.Builder.newInstance()
+    private final IdentityHubParticipantContextService participantContextService = mock(a -> ServiceResult.success(IdentityHubParticipantContext.Builder.newInstance()
             .participantContextId(a.getArgument(0).toString())
             .apiTokenAlias("test-alias")
+            .did("did:example:123")
             .build()));
 
     @Test
@@ -138,7 +139,7 @@ class PresentationApiControllerTest extends RestControllerTestBase {
         when(typeTransformerRegistry.transform(isA(JsonObject.class), eq(PresentationQueryMessage.class))).thenReturn(Result.success(presentationQueryBuilder.build()));
 
         var response = controller().queryPresentation(PARTICIPANT_ID, createObjectBuilder().build(), generateAuthToken());
-        assertThat(response.getStatus()).isEqualTo(503);
+        assertThat(response.getStatus()).isEqualTo(501);
         assertThat(response.getEntity()).extracting(o -> (ApiErrorDetail) o).satisfies(ed -> {
             assertThat(ed.getMessage()).isEqualTo("Not implemented.");
             assertThat(ed.getType()).isEqualTo("Not implemented.");

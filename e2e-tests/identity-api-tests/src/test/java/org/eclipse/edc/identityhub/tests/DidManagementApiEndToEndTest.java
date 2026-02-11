@@ -15,18 +15,22 @@
 package org.eclipse.edc.identityhub.tests;
 
 import io.restassured.http.Header;
+import org.eclipse.edc.api.authentication.OauthServerEndToEndExtension;
+import org.eclipse.edc.iam.decentralizedclaims.sts.spi.store.StsAccountStore;
 import org.eclipse.edc.iam.did.spi.document.DidDocument;
-import org.eclipse.edc.iam.identitytrust.sts.spi.store.StsAccountStore;
 import org.eclipse.edc.identityhub.spi.did.events.DidDocumentPublished;
 import org.eclipse.edc.identityhub.spi.did.events.DidDocumentUnpublished;
 import org.eclipse.edc.identityhub.spi.did.store.DidResourceStore;
 import org.eclipse.edc.identityhub.spi.keypair.store.KeyPairResourceStore;
-import org.eclipse.edc.identityhub.spi.participantcontext.ParticipantContextService;
-import org.eclipse.edc.identityhub.spi.participantcontext.model.ParticipantContext;
-import org.eclipse.edc.identityhub.tests.fixtures.credentialservice.IdentityHubExtension;
-import org.eclipse.edc.identityhub.tests.fixtures.credentialservice.IdentityHubRuntime;
+import org.eclipse.edc.identityhub.spi.participantcontext.IdentityHubParticipantContextService;
+import org.eclipse.edc.identityhub.spi.participantcontext.model.IdentityHubParticipantContext;
+import org.eclipse.edc.identityhub.tests.fixtures.DefaultRuntimes;
+import org.eclipse.edc.identityhub.tests.fixtures.credentialservice.IdentityHub;
 import org.eclipse.edc.junit.annotations.EndToEndTest;
 import org.eclipse.edc.junit.annotations.PostgresqlIntegrationTest;
+import org.eclipse.edc.junit.extensions.ComponentRuntimeExtension;
+import org.eclipse.edc.junit.extensions.RuntimeExtension;
+import org.eclipse.edc.spi.EdcException;
 import org.eclipse.edc.spi.event.EventRouter;
 import org.eclipse.edc.spi.event.EventSubscriber;
 import org.eclipse.edc.spi.query.QuerySpec;
@@ -40,15 +44,16 @@ import org.junit.jupiter.api.extension.BeforeAllCallback;
 import org.junit.jupiter.api.extension.RegisterExtension;
 
 import java.util.Arrays;
-import java.util.List;
+import java.util.Base64;
 
 import static io.restassured.http.ContentType.JSON;
 import static java.util.stream.IntStream.range;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.eclipse.edc.identityhub.tests.fixtures.TestData.IH_RUNTIME_ID;
-import static org.eclipse.edc.identityhub.tests.fixtures.TestData.IH_RUNTIME_MEM_MODULES;
 import static org.eclipse.edc.identityhub.tests.fixtures.TestData.IH_RUNTIME_NAME;
-import static org.eclipse.edc.identityhub.tests.fixtures.TestData.IH_RUNTIME_SQL_MODULES;
+import static org.eclipse.edc.identityhub.tests.fixtures.TestFunctions.authorizeOauth2;
+import static org.eclipse.edc.identityhub.tests.fixtures.TestFunctions.authorizeTokenBased;
+import static org.eclipse.edc.identityhub.tests.fixtures.common.AbstractIdentityHub.SUPER_USER;
+import static org.hamcrest.Matchers.containsString;
 import static org.mockito.Mockito.argThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.reset;
@@ -58,54 +63,55 @@ import static org.mockito.Mockito.verifyNoInteractions;
 @SuppressWarnings("JUnitMalformedDeclaration")
 public class DidManagementApiEndToEndTest {
 
+    public static final String PARTICIPANT_CONTEXT_ID = "user1";
+
     abstract static class Tests {
 
         @AfterEach
-        void tearDown(ParticipantContextService pcService, DidResourceStore didResourceStore, KeyPairResourceStore keyPairResourceStore, StsAccountStore stsAccountStore) {
+        void tearDown(IdentityHubParticipantContextService pcService, DidResourceStore didResourceStore, KeyPairResourceStore keyPairResourceStore, StsAccountStore stsAccountStore) {
             // purge all users, dids, keypairs
 
             pcService.query(QuerySpec.max()).getContent()
-                    .forEach(pc -> pcService.deleteParticipantContext(pc.getParticipantContextId()).getContent());
+                    .forEach(pc -> pcService.deleteParticipantContext(pc.getParticipantContextId()).orElseThrow(f -> new EdcException(f.getFailureDetail())));
 
-            didResourceStore.query(QuerySpec.max()).forEach(dr -> didResourceStore.deleteById(dr.getDid()).getContent());
+            didResourceStore.query(QuerySpec.max()).forEach(dr -> didResourceStore.deleteById(dr.getDid()).orElseThrow(f -> new EdcException(f.getFailureDetail())));
 
             keyPairResourceStore.query(QuerySpec.max()).getContent()
-                    .forEach(kpr -> keyPairResourceStore.deleteById(kpr.getId()).getContent());
+                    .forEach(kpr -> keyPairResourceStore.deleteById(kpr.getId()).orElseThrow(f -> new EdcException(f.getFailureDetail())));
 
             stsAccountStore.findAll(QuerySpec.max())
-                    .forEach(sts -> stsAccountStore.deleteById(sts.getId()).getContent());
+                    .forEach(sts -> stsAccountStore.deleteById(sts.getId()).orElseThrow(f -> new EdcException(f.getFailureDetail())));
         }
 
         @Test
-        void publishDid_notOwner_expect403(IdentityHubRuntime identityHubRuntime, EventRouter router) {
+        void publishDid_notOwner_expect403(IdentityHub identityHub, EventRouter router) {
             var subscriber = mock(EventSubscriber.class);
             router.registerSync(DidDocumentPublished.class, subscriber);
 
-            var user1 = "user1";
-            identityHubRuntime.createParticipant(user1);
-
+            var userAuth = authorizeUser(PARTICIPANT_CONTEXT_ID, identityHub);
 
             // create second user
             var user2 = "user2";
-            var user2Context = ParticipantContext.Builder.newInstance()
+            var user2Context = IdentityHubParticipantContext.Builder.newInstance()
                     .participantContextId(user2)
                     .did("did:web:" + user2)
                     .apiTokenAlias(user2 + "-alias")
                     .build();
-            var user2Token = identityHubRuntime.storeParticipant(user2Context);
+            identityHub.storeParticipant(user2Context);
+            var user2Auth = authorizeUser(user2, identityHub);
 
             reset(subscriber); // need to reset here, to ignore a previous interaction
 
             // attempt to publish user1's DID document, which should fail
-            identityHubRuntime.getIdentityEndpoint().baseRequest()
+            identityHub.getIdentityEndpoint().baseRequest()
                     .contentType(JSON)
-                    .header(new Header("x-api-key", user2Token))
+                    .header(user2Auth)
                     .body("""
                             {
                                "did": "did:web:user1"
                             }
                             """)
-                    .post("/v1alpha/participants/%s/dids/publish".formatted(user1))
+                    .post("/v1alpha/participants/%s/dids/publish".formatted(toBase64(PARTICIPANT_CONTEXT_ID)))
                     .then()
                     .log().ifValidationFails()
                     .statusCode(403)
@@ -115,26 +121,26 @@ public class DidManagementApiEndToEndTest {
         }
 
         @Test
-        void publishDid(IdentityHubRuntime identityHubRuntime, EventRouter router) {
-            var superUserKey = identityHubRuntime.createSuperUser().apiKey();
+        void publishDid(IdentityHub identityHub, EventRouter router) {
             var subscriber = mock(EventSubscriber.class);
             router.registerSync(DidDocumentPublished.class, subscriber);
 
-            var user = "test-user";
-            var token = identityHubRuntime.createParticipant(user).apiKey();
+            var superUserAuth = authorizeUser(SUPER_USER, identityHub);
+            var userAuth = authorizeUser(PARTICIPANT_CONTEXT_ID, identityHub);
+            var did = "did:web:" + PARTICIPANT_CONTEXT_ID;
 
-            assertThat(Arrays.asList(token, superUserKey))
+            assertThat(Arrays.asList(userAuth, superUserAuth))
                     .allSatisfy(t -> {
                         reset(subscriber);
-                        identityHubRuntime.getIdentityEndpoint().baseRequest()
+                        identityHub.getIdentityEndpoint().baseRequest()
                                 .contentType(JSON)
-                                .header(new Header("x-api-key", t))
+                                .header(t)
                                 .body("""
                                         {
-                                           "did": "did:web:test-user"
+                                           "did": "%s"
                                         }
-                                        """)
-                                .post("/v1alpha/participants/%s/dids/publish".formatted(user))
+                                        """.formatted(did))
+                                .post("/v1alpha/participants/%s/dids/publish".formatted(toBase64(PARTICIPANT_CONTEXT_ID)))
                                 .then()
                                 .log().ifValidationFails()
                                 .statusCode(204)
@@ -143,41 +149,43 @@ public class DidManagementApiEndToEndTest {
                         // verify that the publish event was fired twice
                         verify(subscriber).on(argThat(env -> {
                             if (env.getPayload() instanceof DidDocumentPublished event) {
-                                return event.getDid().equals("did:web:test-user");
+                                return event.getDid().equals(did);
                             }
                             return false;
                         }));
-
                     });
-
         }
 
-
         @Test
-        void publishDid_participantNotActivated_expect400(IdentityHubRuntime identityHubRuntime, EventRouter router) {
-            var superUserKey = identityHubRuntime.createSuperUser().apiKey();
+        void publishDid_participantNotActivated_expect400(IdentityHub identityHub, EventRouter router, IdentityHubParticipantContextService service) {
+            var superUserAuth = authorizeUser(SUPER_USER, identityHub);
             var subscriber = mock(EventSubscriber.class);
             router.registerSync(DidDocumentPublished.class, subscriber);
 
-            var user = "test-user";
-            var token = identityHubRuntime.createParticipant(user, List.of(), false).apiKey();
+            var did = "did:web:" + PARTICIPANT_CONTEXT_ID;
+            var p = identityHub.buildParticipantManifest(PARTICIPANT_CONTEXT_ID, PARTICIPANT_CONTEXT_ID + "-key")
+                    .active(false)
+                    .did(did)
+                    .build();
+            service.createParticipantContext(p).orElseThrow(f -> new EdcException(f.getFailureDetail()));
+            var token = authorizeUser(p.getParticipantContextId(), identityHub);
 
-            assertThat(Arrays.asList(token, superUserKey))
+            assertThat(Arrays.asList(token, superUserAuth))
                     .allSatisfy(t -> {
                         reset(subscriber);
-                        identityHubRuntime.getIdentityEndpoint().baseRequest()
+                        identityHub.getIdentityEndpoint().baseRequest()
                                 .contentType(JSON)
-                                .header(new Header("x-api-key", t))
+                                .header(t)
                                 .body("""
                                         {
-                                           "did": "did:web:test-user"
+                                           "did": "%s"
                                         }
-                                        """)
-                                .post("/v1alpha/participants/%s/dids/publish".formatted(user))
+                                        """.formatted(did))
+                                .post("/v1alpha/participants/%s/dids/publish".formatted(toBase64(PARTICIPANT_CONTEXT_ID)))
                                 .then()
                                 .log().ifValidationFails()
                                 .statusCode(400)
-                                .body(Matchers.containsString("Cannot publish DID 'did:web:test-user' for participant 'test-user' because the ParticipantContext state is not 'ACTIVATED', but 'CREATED'."));
+                                .body(Matchers.matchesRegex(".*Cannot publish DID 'did:web:.*' for participant '.*' because the ParticipantContext state is not 'ACTIVATED', but 'CREATED'.*"));
 
                         // verify that the publish event was fired twice
                         verifyNoInteractions(subscriber);
@@ -185,35 +193,29 @@ public class DidManagementApiEndToEndTest {
         }
 
         @Test
-        void unpublishDid_notOwner_expect403(IdentityHubRuntime identityHubRuntime, EventRouter router) {
+        void unpublishDid_notOwner_expect403(IdentityHub identityHub, EventRouter router) {
             var subscriber = mock(EventSubscriber.class);
             router.registerSync(DidDocumentPublished.class, subscriber);
 
-            var user1 = "user1";
-            identityHubRuntime.createParticipant(user1);
-
+            var did = "did:web:" + PARTICIPANT_CONTEXT_ID;
+            identityHub.createParticipant(PARTICIPANT_CONTEXT_ID);
 
             // create second user
             var user2 = "user2";
-            var user2Context = ParticipantContext.Builder.newInstance()
-                    .participantContextId(user2)
-                    .did("did:web:" + user2)
-                    .apiTokenAlias(user2 + "-alias")
-                    .build();
-            var user2Token = identityHubRuntime.storeParticipant(user2Context);
+            var user2Auth = authorizeUser(user2, identityHub);
 
             reset(subscriber); // need to reset here, to ignore a previous interaction
 
             // attempt to publish user1's DID document, which should fail
-            identityHubRuntime.getIdentityEndpoint().baseRequest()
+            identityHub.getIdentityEndpoint().baseRequest()
                     .contentType(JSON)
-                    .header(new Header("x-api-key", user2Token))
+                    .header(user2Auth)
                     .body("""
                             {
-                               "did": "did:web:user1"
+                               "did": "%s"
                             }
-                            """)
-                    .post("/v1alpha/participants/%s/dids/unpublish".formatted(user1))
+                            """.formatted(did))
+                    .post("/v1alpha/participants/%s/dids/unpublish".formatted(toBase64(PARTICIPANT_CONTEXT_ID)))
                     .then()
                     .log().ifValidationFails()
                     .statusCode(403)
@@ -223,26 +225,25 @@ public class DidManagementApiEndToEndTest {
         }
 
         @Test
-        void unpublishDid_withSuperUserToken(IdentityHubRuntime identityHubRuntime, EventRouter router, ParticipantContextService participantContextService) {
-            var superUserKey = identityHubRuntime.createSuperUser().apiKey();
+        void unpublishDid_withSuperUserToken(IdentityHub identityHub, EventRouter router, IdentityHubParticipantContextService participantContextService) {
+            var superUserKey = authorizeUser(SUPER_USER, identityHub);
             var subscriber = mock(EventSubscriber.class);
             router.registerSync(DidDocumentUnpublished.class, subscriber);
 
-            var user = "test-user";
-            identityHubRuntime.createParticipant(user);
+            identityHub.createParticipant(PARTICIPANT_CONTEXT_ID);
 
-            participantContextService.updateParticipant(user, ParticipantContext::deactivate);
+            participantContextService.updateParticipant(PARTICIPANT_CONTEXT_ID, IdentityHubParticipantContext::deactivate);
 
             reset(subscriber);
-            identityHubRuntime.getIdentityEndpoint().baseRequest()
+            identityHub.getIdentityEndpoint().baseRequest()
                     .contentType(JSON)
-                    .header(new Header("x-api-key", superUserKey))
+                    .header(superUserKey)
                     .body("""
                             {
-                               "did": "did:web:test-user"
+                               "did": "did:web:%s"
                             }
-                            """)
-                    .post("/v1alpha/participants/%s/dids/unpublish".formatted(user))
+                            """.formatted(PARTICIPANT_CONTEXT_ID))
+                    .post("/v1alpha/participants/%s/dids/unpublish".formatted(toBase64(PARTICIPANT_CONTEXT_ID)))
                     .then()
                     .log().ifValidationFails()
                     .statusCode(204)
@@ -253,26 +254,25 @@ public class DidManagementApiEndToEndTest {
         }
 
         @Test
-        void unpublishDid_withUserToken(IdentityHubRuntime identityHubRuntime, EventRouter router, ParticipantContextService participantContextService) {
+        void unpublishDid_withUserToken(IdentityHub identityHub, EventRouter router, IdentityHubParticipantContextService participantContextService) {
             var subscriber = mock(EventSubscriber.class);
             router.registerSync(DidDocumentUnpublished.class, subscriber);
 
-            var user = "test-user";
-            var token = identityHubRuntime.createParticipant(user).apiKey();
+            var user = PARTICIPANT_CONTEXT_ID;
+            var userAuth = authorizeUser(user, identityHub);
 
-            participantContextService.updateParticipant(user, ParticipantContext::deactivate);
-
+            participantContextService.updateParticipant(user, IdentityHubParticipantContext::deactivate);
 
             reset(subscriber);
-            identityHubRuntime.getIdentityEndpoint().baseRequest()
+            identityHub.getIdentityEndpoint().baseRequest()
                     .contentType(JSON)
-                    .header(new Header("x-api-key", token))
+                    .header(userAuth)
                     .body("""
                             {
-                               "did": "did:web:test-user"
+                               "did": "did:web:%s"
                             }
-                            """)
-                    .post("/v1alpha/participants/%s/dids/unpublish".formatted(user))
+                            """.formatted(PARTICIPANT_CONTEXT_ID))
+                    .post("/v1alpha/participants/%s/dids/unpublish".formatted(toBase64(user)))
                     .then()
                     .log().ifValidationFails()
                     .statusCode(204)
@@ -283,62 +283,64 @@ public class DidManagementApiEndToEndTest {
         }
 
         @Test
-        void unpublishDid_participantActive_expect400(IdentityHubRuntime identityHubRuntime, EventRouter router) {
+        void unpublishDid_participantActive_expect400(IdentityHub identityHub, EventRouter router) {
             var subscriber = mock(EventSubscriber.class);
             router.registerSync(DidDocumentUnpublished.class, subscriber);
 
-            var user = "test-user";
-            var token = identityHubRuntime.createParticipant(user, List.of(), true).apiKey();
+            var user = PARTICIPANT_CONTEXT_ID;
+            var did = "did:web:" + user;
+            var userAuth = authorizeUser(user, identityHub);
 
             reset(subscriber);
-            identityHubRuntime.getIdentityEndpoint().baseRequest()
+            identityHub.getIdentityEndpoint().baseRequest()
                     .contentType(JSON)
-                    .header(new Header("x-api-key", token))
+                    .header(userAuth)
                     .body("""
                             {
-                               "did": "did:web:test-user"
+                               "did": "%s"
                             }
-                            """)
-                    .post("/v1alpha/participants/%s/dids/unpublish".formatted(user))
+                            """.formatted(did))
+                    .post("/v1alpha/participants/%s/dids/unpublish".formatted(toBase64(user)))
                     .then()
                     .log().ifValidationFails()
                     .statusCode(400)
-                    .body(Matchers.containsString("Cannot un-publish DID 'did:web:test-user' for participant 'test-user' because the ParticipantContext is not 'DEACTIVATED' state, but was 'ACTIVATED'."));
+                    .body(containsString("Cannot un-publish DID '%s' for participant '%s' because the ParticipantContext is not 'DEACTIVATED' state, but was 'ACTIVATED'."
+                            .formatted(did, user)));
 
             // verify that the unpublish event was fired
             verifyNoInteractions(subscriber);
         }
 
         @Test
-        void getState_nowOwner_expect403(IdentityHubRuntime identityHubRuntime) {
-            var user1 = "user1";
-            identityHubRuntime.createParticipant(user1);
+        void getState_nowOwner_expect403(IdentityHub identityHub) {
+            var user1 = PARTICIPANT_CONTEXT_ID;
+            identityHub.createParticipant(user1);
 
             var user2 = "user2";
-            var token2 = identityHubRuntime.createParticipant(user2).apiKey();
+            var token2 = authorizeUser(user2, identityHub);
 
-            identityHubRuntime.getIdentityEndpoint().baseRequest()
-                    .header(new Header("x-api-key", token2))
+            identityHub.getIdentityEndpoint().baseRequest()
+                    .header(token2)
                     .contentType(JSON)
                     .body(""" 
                             {
-                               "did": "did:web:user1"
+                               "did": "did:web:%s"
                             }
-                            """)
-                    .post("/v1alpha/participants/%s/dids/state".formatted(user1))
+                            """.formatted(user1))
+                    .post("/v1alpha/participants/%s/dids/state".formatted(toBase64(user1)))
                     .then()
                     .log().ifValidationFails()
                     .statusCode(403);
         }
 
         @Test
-        void getAll(IdentityHubRuntime identityHubRuntime) {
-            var superUserKey = identityHubRuntime.createSuperUser().apiKey();
-            range(0, 20).forEach(i -> identityHubRuntime.createParticipant("user-" + i));
+        void getAll(IdentityHub identityHub) {
+            var superUserAuth = authorizeUser(SUPER_USER, identityHub);
+            range(0, 20).forEach(i -> identityHub.createParticipant("user-" + i));
 
-            var docs = identityHubRuntime.getIdentityEndpoint().baseRequest()
+            var docs = identityHub.getIdentityEndpoint().baseRequest()
                     .contentType(JSON)
-                    .header(new Header("x-api-key", superUserKey))
+                    .header(superUserAuth)
                     .get("/v1alpha/dids")
                     .then()
                     .log().ifValidationFails()
@@ -349,13 +351,13 @@ public class DidManagementApiEndToEndTest {
         }
 
         @Test
-        void getAll_withDefaultPaging(IdentityHubRuntime identityHubRuntime) {
-            var superUserKey = identityHubRuntime.createSuperUser().apiKey();
-            range(0, 70).forEach(i -> identityHubRuntime.createParticipant("user-" + i));
+        void getAll_withDefaultPaging(IdentityHub identityHub) {
+            var superUserKey = authorizeUser(SUPER_USER, identityHub);
+            range(0, 70).forEach(i -> identityHub.createParticipant("user-" + i));
 
-            var docs = identityHubRuntime.getIdentityEndpoint().baseRequest()
+            var docs = identityHub.getIdentityEndpoint().baseRequest()
                     .contentType(JSON)
-                    .header(new Header("x-api-key", superUserKey))
+                    .header(superUserKey)
                     .get("/v1alpha/dids")
                     .then()
                     .log().ifValidationFails()
@@ -366,13 +368,13 @@ public class DidManagementApiEndToEndTest {
         }
 
         @Test
-        void getAll_withPaging(IdentityHubRuntime identityHubRuntime) {
-            var superUserKey = identityHubRuntime.createSuperUser().apiKey();
-            range(0, 20).forEach(i -> identityHubRuntime.createParticipant("user-" + i));
+        void getAll_withPaging(IdentityHub identityHub) {
+            var superUserAuth = authorizeUser(SUPER_USER, identityHub);
+            range(0, 20).forEach(i -> identityHub.createParticipant("user-" + i));
 
-            var docs = identityHubRuntime.getIdentityEndpoint().baseRequest()
+            var docs = identityHub.getIdentityEndpoint().baseRequest()
                     .contentType(JSON)
-                    .header(new Header("x-api-key", superUserKey))
+                    .header(superUserAuth)
                     .get("/v1alpha/dids?offset=5&limit=10")
                     .then()
                     .log().ifValidationFails()
@@ -383,17 +385,24 @@ public class DidManagementApiEndToEndTest {
         }
 
         @Test
-        void getAll_notAuthorized(IdentityHubRuntime identityHubRuntime) {
+        void getAll_notAuthorized(IdentityHub identityHub) {
 
-            var attackerToken = identityHubRuntime.createParticipant("attacker").apiKey();
+            var attackerToken = authorizeUser("attacker", identityHub);
 
-            identityHubRuntime.getIdentityEndpoint().baseRequest()
+            identityHub.getIdentityEndpoint().baseRequest()
                     .contentType(JSON)
-                    .header(new Header("x-api-key", attackerToken))
+                    .header(attackerToken)
                     .get("/v1alpha/dids")
                     .then()
                     .log().ifValidationFails()
                     .statusCode(403);
+        }
+
+        protected abstract Header authorizeUser(String participantContextId, IdentityHub identityHub);
+
+
+        private String toBase64(String s) {
+            return Base64.getUrlEncoder().encodeToString(s.getBytes());
         }
 
     }
@@ -403,12 +412,18 @@ public class DidManagementApiEndToEndTest {
     class InMemory extends Tests {
 
         @RegisterExtension
-        static final IdentityHubExtension IDENTITY_HUB_EXTENSION = IdentityHubExtension.Builder.newInstance()
+        static final RuntimeExtension IDENTITY_HUB_EXTENSION = ComponentRuntimeExtension.Builder.newInstance()
                 .name(IH_RUNTIME_NAME)
-                .id(IH_RUNTIME_ID)
-                .modules(IH_RUNTIME_MEM_MODULES)
+                .modules(DefaultRuntimes.IdentityHub.MODULES)
+                .endpoints(DefaultRuntimes.IdentityHub.ENDPOINTS.build())
+                .configurationProvider(DefaultRuntimes.IdentityHub::config)
+                .paramProvider(IdentityHub.class, IdentityHub::forContext)
                 .build();
 
+        @Override
+        protected Header authorizeUser(String participantContextId, IdentityHub identityHub) {
+            return authorizeTokenBased(participantContextId, identityHub);
+        }
     }
 
     @Nested
@@ -428,11 +443,87 @@ public class DidManagementApiEndToEndTest {
 
         @Order(2)
         @RegisterExtension
-        static final IdentityHubExtension IDENTITY_HUB_EXTENSION = IdentityHubExtension.Builder.newInstance()
+        static final RuntimeExtension IDENTITY_HUB_EXTENSION = ComponentRuntimeExtension.Builder.newInstance()
                 .name(IH_RUNTIME_NAME)
-                .id(IH_RUNTIME_ID)
-                .modules(IH_RUNTIME_SQL_MODULES)
+                .modules(DefaultRuntimes.IdentityHub.SQL_MODULES)
+                .endpoints(DefaultRuntimes.IdentityHub.ENDPOINTS.build())
+                .configurationProvider(DefaultRuntimes.IdentityHub::config)
                 .configurationProvider(() -> POSTGRESQL_EXTENSION.configFor(DB_NAME))
+                .paramProvider(IdentityHub.class, IdentityHub::forContext)
                 .build();
+
+        @Override
+        protected Header authorizeUser(String participantContextId, IdentityHub identityHub) {
+            return authorizeTokenBased(participantContextId, identityHub);
+        }
+    }
+
+    @Nested
+    @EndToEndTest
+    class InMemoryOauth2 extends Tests {
+
+        private static final String ISSUER = "issuer";
+
+        @Order(0)
+        @RegisterExtension
+        static final OauthServerEndToEndExtension OAUTH_2_EXTENSION = OauthServerEndToEndExtension.Builder.newInstance()
+                .issuer(ISSUER)
+                .build();
+
+        @Order(1)
+        @RegisterExtension
+        static final RuntimeExtension IDENTITY_HUB_EXTENSION = ComponentRuntimeExtension.Builder.newInstance()
+                .name(IH_RUNTIME_NAME)
+                .modules(DefaultRuntimes.IdentityHub.MODULES_OAUTH2)
+                .endpoints(DefaultRuntimes.IdentityHub.ENDPOINTS.build())
+                .configurationProvider(DefaultRuntimes.IdentityHub::config)
+                .configurationProvider(OAUTH_2_EXTENSION::getConfig)
+                .paramProvider(IdentityHub.class, IdentityHub::forContext)
+                .build();
+
+        @Override
+        protected Header authorizeUser(String participantContextId, IdentityHub identityHub) {
+            return authorizeOauth2(participantContextId, identityHub, OAUTH_2_EXTENSION.getAuthServer());
+        }
+    }
+
+    @Nested
+    @EndToEndTest
+    class PostgresOauth2 extends Tests {
+
+        @Order(0)
+        @RegisterExtension
+        static final PostgresqlEndToEndExtension POSTGRESQL_EXTENSION = new PostgresqlEndToEndExtension();
+
+        private static final String ISSUER = "issuer";
+        @Order(0)
+        @RegisterExtension
+        static final OauthServerEndToEndExtension OAUTH_2_EXTENSION = OauthServerEndToEndExtension.Builder.newInstance()
+                .issuer(ISSUER)
+                .build();
+
+        private static final String DB_NAME = "runtime";
+        @Order(1)
+        @RegisterExtension
+        static final BeforeAllCallback POSTGRES_CONTAINER_STARTER = context -> {
+            POSTGRESQL_EXTENSION.createDatabase(DB_NAME);
+        };
+
+        @Order(2)
+        @RegisterExtension
+        static final RuntimeExtension IDENTITY_HUB_EXTENSION = ComponentRuntimeExtension.Builder.newInstance()
+                .name(IH_RUNTIME_NAME)
+                .modules(DefaultRuntimes.IdentityHub.SQL_OAUTH2_MODULES)
+                .endpoints(DefaultRuntimes.IdentityHub.ENDPOINTS.build())
+                .configurationProvider(DefaultRuntimes.IdentityHub::config)
+                .configurationProvider(() -> POSTGRESQL_EXTENSION.configFor(DB_NAME))
+                .configurationProvider(OAUTH_2_EXTENSION::getConfig)
+                .paramProvider(IdentityHub.class, IdentityHub::forContext)
+                .build();
+
+        @Override
+        protected Header authorizeUser(String participantContextId, IdentityHub identityHub) {
+            return authorizeOauth2(participantContextId, identityHub, OAUTH_2_EXTENSION.getAuthServer());
+        }
     }
 }

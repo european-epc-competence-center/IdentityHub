@@ -15,9 +15,10 @@
 package org.eclipse.edc.identityhub.tests;
 
 import io.restassured.http.Header;
-import org.eclipse.edc.identityhub.spi.participantcontext.ParticipantContextService;
-import org.eclipse.edc.identityhub.tests.fixtures.issuerservice.IssuerExtension;
-import org.eclipse.edc.identityhub.tests.fixtures.issuerservice.IssuerRuntime;
+import org.eclipse.edc.api.authentication.OauthServerEndToEndExtension;
+import org.eclipse.edc.identityhub.spi.participantcontext.IdentityHubParticipantContextService;
+import org.eclipse.edc.identityhub.tests.fixtures.DefaultRuntimes;
+import org.eclipse.edc.identityhub.tests.fixtures.issuerservice.IssuerService;
 import org.eclipse.edc.issuerservice.spi.holder.model.Holder;
 import org.eclipse.edc.issuerservice.spi.holder.store.HolderStore;
 import org.eclipse.edc.issuerservice.spi.issuance.attestation.AttestationDefinitionStore;
@@ -25,6 +26,8 @@ import org.eclipse.edc.issuerservice.spi.issuance.attestation.AttestationDefinit
 import org.eclipse.edc.issuerservice.spi.issuance.model.AttestationDefinition;
 import org.eclipse.edc.junit.annotations.EndToEndTest;
 import org.eclipse.edc.junit.annotations.PostgresqlIntegrationTest;
+import org.eclipse.edc.junit.extensions.ComponentRuntimeExtension;
+import org.eclipse.edc.junit.extensions.RuntimeExtension;
 import org.eclipse.edc.spi.query.Criterion;
 import org.eclipse.edc.spi.query.QuerySpec;
 import org.eclipse.edc.spi.query.SortOrder;
@@ -44,10 +47,9 @@ import java.util.Map;
 
 import static io.restassured.http.ContentType.JSON;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.eclipse.edc.identityhub.tests.TestData.ISSUER_RUNTIME_ID;
-import static org.eclipse.edc.identityhub.tests.TestData.ISSUER_RUNTIME_MEM_MODULES;
 import static org.eclipse.edc.identityhub.tests.TestData.ISSUER_RUNTIME_NAME;
-import static org.eclipse.edc.identityhub.tests.TestData.ISSUER_RUNTIME_SQL_MODULES;
+import static org.eclipse.edc.identityhub.tests.fixtures.TestFunctions.authorizeOauth2;
+import static org.eclipse.edc.identityhub.tests.fixtures.TestFunctions.authorizeTokenBased;
 import static org.eclipse.edc.junit.assertions.AbstractResultAssert.assertThat;
 import static org.hamcrest.Matchers.equalTo;
 
@@ -57,16 +59,17 @@ public class AttestationApiEndToEndTest {
     abstract static class Tests {
 
         public static final String USER = "user";
+        public static final String USER_BASE64 = Base64.getUrlEncoder().encodeToString(USER.getBytes());
 
         @BeforeAll
-        static void setup(IssuerRuntime runtime) {
-            var registry = runtime.getService(AttestationDefinitionValidatorRegistry.class);
+        static void setup(IssuerService issuer) {
+            var registry = issuer.getService(AttestationDefinitionValidatorRegistry.class);
             registry.registerValidator("test-type", def -> ValidationResult.success());
             registry.registerValidator("test-failure-type", def -> ValidationResult.failure(Violation.violation("test", null)));
         }
 
         @AfterEach
-        void teardown(AttestationDefinitionStore store, HolderStore holderStore, ParticipantContextService pcService) {
+        void teardown(AttestationDefinitionStore store, HolderStore holderStore, IdentityHubParticipantContextService pcService) {
             store.query(QuerySpec.max()).getContent()
                     .forEach(att -> store.deleteById(att.getId()));
 
@@ -78,13 +81,12 @@ public class AttestationApiEndToEndTest {
         }
 
         @Test
-        void createAttestationDefinition(IssuerRuntime runtime, AttestationDefinitionStore store) {
-            var token = runtime.createParticipant(USER).apiKey();
-            runtime.getAdminEndpoint().baseRequest()
+        void createAttestationDefinition(IssuerService issuer, AttestationDefinitionStore store, IssuerService issuerService) {
+            issuer.getAdminEndpoint().baseRequest()
                     .contentType(JSON)
-                    .header(new Header("x-api-key", token))
+                    .header(authorizeUser(USER, issuerService))
                     .body(createAttestationDefinition("test-id", "test-type", Map.of("foo", "bar")))
-                    .post("/v1alpha/participants/%s/attestations".formatted(toBase64(USER)))
+                    .post("/v1alpha/participants/%s/attestations".formatted(USER_BASE64))
                     .then()
                     .log().ifValidationFails()
                     .statusCode(201);
@@ -93,14 +95,13 @@ public class AttestationApiEndToEndTest {
         }
 
         @Test
-        void createAttestationDefinition_notAuthorized(IssuerRuntime runtime) {
-            runtime.createParticipant(USER);
-            var token = runtime.createParticipant("anotherUser").apiKey();
-            runtime.getAdminEndpoint().baseRequest()
+        void createAttestationDefinition_notAuthorized(IssuerService issuer) {
+            issuer.createParticipant(USER);
+            issuer.getAdminEndpoint().baseRequest()
                     .contentType(JSON)
-                    .header(new Header("x-api-key", token))
+                    .header(authorizeUser("anotherUser", issuer))
                     .body(createAttestationDefinition("test-id", "test-type", Map.of("foo", "bar")))
-                    .post("/v1alpha/participants/%s/attestations".formatted(toBase64(USER)))
+                    .post("/v1alpha/participants/%s/attestations".formatted(USER_BASE64))
                     .then()
                     .log().ifValidationFails()
                     .statusCode(403);
@@ -108,14 +109,13 @@ public class AttestationApiEndToEndTest {
         }
 
         @Test
-        void createAttestationDefinition_shouldReturn400_whenValidationFails(IssuerRuntime runtime) {
-            var token = runtime.createParticipant(USER).apiKey();
+        void createAttestationDefinition_shouldReturn400_whenValidationFails(IssuerService issuer) {
 
-            runtime.getAdminEndpoint().baseRequest()
+            issuer.getAdminEndpoint().baseRequest()
                     .contentType(JSON)
-                    .header(new Header("x-api-key", token))
+                    .header(authorizeUser(USER, issuer))
                     .body(createAttestationDefinition("test-id", "test-failure-type", Map.of("foo", "bar")))
-                    .post("/v1alpha/participants/%s/attestations".formatted(toBase64(USER)))
+                    .post("/v1alpha/participants/%s/attestations".formatted(USER_BASE64))
                     .then()
                     .log().ifValidationFails()
                     .statusCode(400);
@@ -123,8 +123,7 @@ public class AttestationApiEndToEndTest {
         }
 
         @Test
-        void queryAttestations(IssuerRuntime runtime, AttestationDefinitionStore store, HolderStore holderStore) {
-            var token = runtime.createParticipant(USER).apiKey();
+        void queryAttestations(IssuerService issuer, AttestationDefinitionStore store, HolderStore holderStore) {
 
             var p1 = createHolder("p1", "did:web:foobar", "Foo Bar");
             var p2 = createHolder("p2", "did:web:barbaz", "Bar Baz");
@@ -141,15 +140,15 @@ public class AttestationApiEndToEndTest {
             store.create(attestation3);
 
             //query by attestation type
-            runtime.getAdminEndpoint().baseRequest()
+            issuer.getAdminEndpoint().baseRequest()
                     .contentType(JSON)
-                    .header(new Header("x-api-key", token))
+                    .header(authorizeUser(USER, issuer))
                     .body(QuerySpec.Builder.newInstance()
                             .sortField("id")
                             .sortOrder(SortOrder.ASC)
                             .filter(new Criterion("attestationType", "=", "test-type"))
                             .build())
-                    .post("/v1alpha/participants/%s/attestations/query".formatted(toBase64(USER)))
+                    .post("/v1alpha/participants/%s/attestations/query".formatted(USER_BASE64))
                     .then()
                     .log().ifValidationFails()
                     .statusCode(200)
@@ -160,24 +159,23 @@ public class AttestationApiEndToEndTest {
         }
 
         @Test
-        void queryAttestations_notAuthorized(IssuerRuntime runtime, AttestationDefinitionStore store) {
-            runtime.createParticipant(USER);
-            var token = runtime.createParticipant("anotherUser").apiKey();
+        void queryAttestations_notAuthorized(IssuerService issuer, AttestationDefinitionStore store) {
+            issuer.createParticipant(USER);
 
             var attestation1 = createAttestationDefinition("att1", "test-type", Map.of("key1", "val1"));
 
             store.create(attestation1);
 
             //query by attestation type
-            runtime.getAdminEndpoint().baseRequest()
+            issuer.getAdminEndpoint().baseRequest()
                     .contentType(JSON)
-                    .header(new Header("x-api-key", token))
+                    .header(authorizeUser("anotherUser", issuer))
                     .body(QuerySpec.Builder.newInstance()
                             .sortField("id")
                             .sortOrder(SortOrder.ASC)
                             .filter(new Criterion("attestationType", "=", "test-type"))
                             .build())
-                    .post("/v1alpha/participants/%s/attestations/query".formatted(toBase64(USER)))
+                    .post("/v1alpha/participants/%s/attestations/query".formatted(USER_BASE64))
                     .then()
                     .log().ifValidationFails()
                     .statusCode(200)
@@ -185,9 +183,7 @@ public class AttestationApiEndToEndTest {
 
         }
 
-        private String toBase64(String s) {
-            return Base64.getUrlEncoder().encodeToString(s.getBytes());
-        }
+        protected abstract Header authorizeUser(String participantContextId, IssuerService issuerService);
 
         private AttestationDefinition createAttestationDefinition(String id, String type, Map<String, Object> configuration) {
             return createAttestationDefinition(id, type, configuration, USER);
@@ -217,12 +213,18 @@ public class AttestationApiEndToEndTest {
     class InMemory extends Tests {
 
         @RegisterExtension
-        static final IssuerExtension ISSUER_EXTENSION = IssuerExtension.Builder.newInstance()
-                .id(ISSUER_RUNTIME_ID)
+        static final RuntimeExtension ISSUER_EXTENSION = ComponentRuntimeExtension.Builder.newInstance()
                 .name(ISSUER_RUNTIME_NAME)
-                .modules(ISSUER_RUNTIME_MEM_MODULES)
+                .modules(DefaultRuntimes.Issuer.MODULES)
+                .endpoints(DefaultRuntimes.Issuer.ENDPOINTS.build())
+                .configurationProvider(DefaultRuntimes.Issuer::config)
+                .paramProvider(IssuerService.class, IssuerService::forContext)
                 .build();
 
+        @Override
+        protected Header authorizeUser(String participantContextId, IssuerService issuerService) {
+            return authorizeTokenBased(participantContextId, issuerService);
+        }
     }
 
     @Nested
@@ -243,11 +245,84 @@ public class AttestationApiEndToEndTest {
 
         @Order(2)
         @RegisterExtension
-        static final IssuerExtension ISSUER_EXTENSION = IssuerExtension.Builder.newInstance()
-                .id(ISSUER_RUNTIME_ID)
+        static final RuntimeExtension ISSUER_EXTENSION = ComponentRuntimeExtension.Builder.newInstance()
                 .name(ISSUER_RUNTIME_NAME)
-                .modules(ISSUER_RUNTIME_SQL_MODULES)
+                .modules(DefaultRuntimes.Issuer.SQL_MODULES)
+                .endpoints(DefaultRuntimes.Issuer.ENDPOINTS.build())
+                .configurationProvider(DefaultRuntimes.Issuer::config)
                 .configurationProvider(() -> POSTGRESQL_EXTENSION.configFor(ISSUER))
+                .paramProvider(IssuerService.class, IssuerService::forContext)
                 .build();
+
+        @Override
+        protected Header authorizeUser(String participantContextId, IssuerService issuerService) {
+            return authorizeTokenBased(participantContextId, issuerService);
+        }
+    }
+
+
+    @Nested
+    @EndToEndTest
+    class InMemoryOauth2 extends Tests {
+        private static final String ISSUER = "issuer";
+
+        @Order(0)
+        @RegisterExtension
+        static final OauthServerEndToEndExtension OAUTH_2_EXTENSION = OauthServerEndToEndExtension.Builder.newInstance()
+                .issuer(ISSUER)
+                .signingKeyId("signing-key-id")
+                .build();
+
+        @RegisterExtension
+        static final RuntimeExtension ISSUER_EXTENSION = ComponentRuntimeExtension.Builder.newInstance()
+                .name(ISSUER_RUNTIME_NAME)
+                .modules(DefaultRuntimes.Issuer.MODULES_OAUTH2)
+                .endpoints(DefaultRuntimes.Issuer.ENDPOINTS.build())
+                .configurationProvider(DefaultRuntimes.Issuer::config)
+                .configurationProvider(OAUTH_2_EXTENSION::getConfig)
+                .paramProvider(IssuerService.class, IssuerService::forContext)
+                .build();
+
+        @Override
+        protected Header authorizeUser(String participantContextId, IssuerService issuerService) {
+            return authorizeOauth2(participantContextId, issuerService, OAUTH_2_EXTENSION.getAuthServer());
+        }
+    }
+
+    @Nested
+    @PostgresqlIntegrationTest
+    class PostgresOauth2 extends Tests {
+        @Order(0)
+        @RegisterExtension
+        static final PostgresqlEndToEndExtension POSTGRESQL_EXTENSION = new PostgresqlEndToEndExtension();
+        private static final String ISSUER = "issuer";
+
+        @Order(0)
+        @RegisterExtension
+        static final OauthServerEndToEndExtension OAUTH_2_EXTENSION = OauthServerEndToEndExtension.Builder.newInstance()
+                .issuer(ISSUER)
+                .signingKeyId("signing-key-id")
+                .build();
+        @Order(2)
+        @RegisterExtension
+        static final RuntimeExtension ISSUER_EXTENSION = ComponentRuntimeExtension.Builder.newInstance()
+                .name(ISSUER_RUNTIME_NAME)
+                .modules(DefaultRuntimes.Issuer.SQL_OAUTH2_MODULES)
+                .endpoints(DefaultRuntimes.Issuer.ENDPOINTS.build())
+                .configurationProvider(DefaultRuntimes.Issuer::config)
+                .configurationProvider(OAUTH_2_EXTENSION::getConfig)
+                .configurationProvider(() -> POSTGRESQL_EXTENSION.configFor(ISSUER))
+                .paramProvider(IssuerService.class, IssuerService::forContext)
+                .build();
+        @Order(1)
+        @RegisterExtension
+        static final BeforeAllCallback POSTGRES_CONTAINER_STARTER = context -> {
+            POSTGRESQL_EXTENSION.createDatabase(ISSUER);
+        };
+
+        @Override
+        protected Header authorizeUser(String participantContextId, IssuerService issuerService) {
+            return authorizeOauth2(participantContextId, issuerService, OAUTH_2_EXTENSION.getAuthServer());
+        }
     }
 }

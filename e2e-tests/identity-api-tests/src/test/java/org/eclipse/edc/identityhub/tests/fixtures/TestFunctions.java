@@ -14,22 +14,59 @@
 
 package org.eclipse.edc.identityhub.tests.fixtures;
 
+import io.restassured.http.Header;
+import org.eclipse.edc.api.auth.spi.ParticipantPrincipal;
+import org.eclipse.edc.api.authentication.OauthServer;
 import org.eclipse.edc.iam.did.spi.document.Service;
 import org.eclipse.edc.iam.verifiablecredentials.spi.model.CredentialSubject;
 import org.eclipse.edc.iam.verifiablecredentials.spi.model.Issuer;
 import org.eclipse.edc.iam.verifiablecredentials.spi.model.VerifiableCredential;
 import org.eclipse.edc.identityhub.spi.participantcontext.model.KeyDescriptor;
+import org.eclipse.edc.identityhub.spi.participantcontext.model.KeyPairUsage;
 import org.eclipse.edc.identityhub.spi.participantcontext.model.ParticipantManifest;
+import org.eclipse.edc.identityhub.tests.fixtures.credentialservice.IdentityHub;
 
 import java.time.Instant;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+
+import static org.eclipse.edc.identityhub.tests.fixtures.common.AbstractIdentityHub.SUPER_USER;
 
 public class TestFunctions {
 
+    /**
+     * Create a token-based authorization header for the given participant context id. The participant context is created
+     * if it does not yet exist
+     */
+    public static Header authorizeTokenBased(String participantContextId, IdentityHub identityHub) {
+        if (SUPER_USER.equals(participantContextId)) {
+            return new Header("x-api-key", identityHub.createSuperUser().apiKey());
+        }
+        return new Header("x-api-key", identityHub.createParticipant(participantContextId).apiKey());
+    }
+
+    /**
+     * Create an OAuth2 authorization header for the given participant context id. The participant context is created if it
+     * does not yet exist.
+     */
+    public static Header authorizeOauth2(String participantContextId, IdentityHub identityHub, OauthServer server) {
+        var role = ParticipantPrincipal.ROLE_PARTICIPANT;
+        if (SUPER_USER.equals(participantContextId)) {
+            identityHub.createSuperUser();
+            role = ParticipantPrincipal.ROLE_ADMIN;
+        } else {
+            identityHub.createParticipant(participantContextId);
+        }
+        var scopes = "management-api:read management-api:write identity-api:read identity-api:write issuer-admin-api:read issuer-admin-api:write";
+
+        return new Header("Authorization", "Bearer " + server.createToken(participantContextId, scopes, role));
+
+    }
+
     public static ParticipantManifest.Builder createNewParticipant() {
         return ParticipantManifest.Builder.newInstance()
-                .participantId("another-participant")
+                .participantContextId("another-participant")
                 .active(false)
                 .did("did:web:another:participant:" + UUID.randomUUID())
                 .serviceEndpoint(new Service("test-service", "test-service-type", "https://test.com"))
@@ -38,6 +75,7 @@ public class TestFunctions {
 
     public static KeyDescriptor.Builder createKeyDescriptor() {
         return KeyDescriptor.Builder.newInstance()
+                .usage(Set.of(KeyPairUsage.PRESENTATION_SIGNING))
                 .privateKeyAlias("another-alias")
                 .keyGeneratorParams(Map.of("algorithm", "EdDSA", "curve", "Ed25519"))
                 .keyId("another-keyid");

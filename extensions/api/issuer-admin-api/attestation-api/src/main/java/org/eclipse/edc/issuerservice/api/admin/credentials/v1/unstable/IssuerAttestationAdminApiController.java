@@ -14,6 +14,7 @@
 
 package org.eclipse.edc.issuerservice.api.admin.credentials.v1.unstable;
 
+import jakarta.annotation.security.RolesAllowed;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.DELETE;
 import jakarta.ws.rs.POST;
@@ -23,10 +24,12 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.Context;
 import jakarta.ws.rs.core.Response;
 import jakarta.ws.rs.core.SecurityContext;
+import org.eclipse.edc.api.auth.spi.AuthorizationService;
+import org.eclipse.edc.api.auth.spi.ParticipantPrincipal;
+import org.eclipse.edc.api.auth.spi.RequiredScope;
 import org.eclipse.edc.identityhub.api.Versions;
 import org.eclipse.edc.identityhub.spi.authorization.AuthorizationResultHandler;
-import org.eclipse.edc.identityhub.spi.authorization.AuthorizationService;
-import org.eclipse.edc.identityhub.spi.participantcontext.model.ParticipantContext;
+import org.eclipse.edc.identityhub.spi.participantcontext.model.IdentityHubParticipantContext;
 import org.eclipse.edc.issuerservice.api.admin.credentials.v1.unstable.model.AttestationDefinitionRequest;
 import org.eclipse.edc.issuerservice.spi.issuance.attestation.AttestationDefinitionService;
 import org.eclipse.edc.issuerservice.spi.issuance.model.AttestationDefinition;
@@ -38,7 +41,7 @@ import java.util.Collection;
 
 import static jakarta.ws.rs.core.MediaType.APPLICATION_JSON;
 import static org.eclipse.edc.identityhub.spi.participantcontext.ParticipantContextId.onEncoded;
-import static org.eclipse.edc.identityhub.spi.participantcontext.model.ParticipantResource.filterByParticipantContextId;
+import static org.eclipse.edc.participantcontext.spi.types.ParticipantResource.filterByParticipantContextId;
 import static org.eclipse.edc.web.spi.exception.ServiceResultHandler.exceptionMapper;
 
 @Consumes(APPLICATION_JSON)
@@ -55,38 +58,44 @@ public class IssuerAttestationAdminApiController implements IssuerAttestationAdm
     }
 
     @POST
+    @RequiredScope("issuer-admin-api:write")
+    @RolesAllowed({ParticipantPrincipal.ROLE_PARTICIPANT, ParticipantPrincipal.ROLE_ADMIN})
     @Override
     public Response createAttestationDefinition(@PathParam("participantContextId") String participantContextId, AttestationDefinitionRequest attestationRequest, @Context SecurityContext securityContext) {
 
-        var decodedParticipantId = onEncoded(participantContextId).orElseThrow(InvalidRequestException::new);
+        var decodedParticipantContextId = onEncoded(participantContextId).orElseThrow(InvalidRequestException::new);
 
-        return authorizationService.isAuthorized(securityContext, decodedParticipantId, ParticipantContext.class)
-                .compose(u -> attestationDefinitionService.createAttestation(createAttestationDefinition(decodedParticipantId, attestationRequest)))
+        return authorizationService.authorize(securityContext, decodedParticipantContextId, decodedParticipantContextId, IdentityHubParticipantContext.class)
+                .compose(u -> attestationDefinitionService.createAttestation(createAttestationDefinition(decodedParticipantContextId, attestationRequest)))
                 .map(u -> Response.created(URI.create(Versions.UNSTABLE + "/participants/%s/attestations/%s".formatted(participantContextId, attestationRequest.id()))).build())
                 .orElseThrow(AuthorizationResultHandler.exceptionMapper(AttestationDefinition.class));
     }
 
     @DELETE
+    @RequiredScope("issuer-admin-api:write")
+    @RolesAllowed({ParticipantPrincipal.ROLE_PARTICIPANT, ParticipantPrincipal.ROLE_ADMIN})
     @Path("/{attestationDefinitionId}")
     @Override
     public void deleteAttestationDefinition(@PathParam("participantContextId") String participantContextId, @PathParam("attestationDefinitionId") String attestationDefinitionId, @Context SecurityContext context) {
-        authorizationService.isAuthorized(context, attestationDefinitionId, AttestationDefinition.class)
+        authorizationService.authorize(context, onEncoded(participantContextId).orElseThrow(InvalidRequestException::new), attestationDefinitionId, AttestationDefinition.class)
                 .compose(u -> attestationDefinitionService.deleteAttestation(attestationDefinitionId))
                 .orElseThrow(exceptionMapper(AttestationDefinition.class, attestationDefinitionId));
     }
 
     @POST
+    @RequiredScope("issuer-admin-api:read")
+    @RolesAllowed({ParticipantPrincipal.ROLE_PARTICIPANT, ParticipantPrincipal.ROLE_ADMIN})
     @Path("/query")
     @Override
     public Collection<AttestationDefinition> queryAttestationDefinitions(@PathParam("participantContextId") String participantContextId, QuerySpec query, @Context SecurityContext context) {
-        var decodedParticipantId = onEncoded(participantContextId).orElseThrow(InvalidRequestException::new);
-        var spec = query.toBuilder().filter(filterByParticipantContextId(decodedParticipantId)).build();
+        var decodedParticipantContextId = onEncoded(participantContextId).orElseThrow(InvalidRequestException::new);
+        var spec = query.toBuilder().filter(filterByParticipantContextId(decodedParticipantContextId)).build();
 
         var attestations = attestationDefinitionService.queryAttestations(spec)
                 .orElseThrow(exceptionMapper(AttestationDefinition.class, null));
 
         return attestations.stream()
-                .filter(attestation -> authorizationService.isAuthorized(context, attestation.getId(), AttestationDefinition.class).succeeded())
+                .filter(attestation -> authorizationService.authorize(context, decodedParticipantContextId, attestation.getId(), AttestationDefinition.class).succeeded())
                 .toList();
     }
 

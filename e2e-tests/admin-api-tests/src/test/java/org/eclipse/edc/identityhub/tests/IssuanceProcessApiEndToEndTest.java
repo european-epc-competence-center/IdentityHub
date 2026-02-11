@@ -15,15 +15,18 @@
 package org.eclipse.edc.identityhub.tests;
 
 import io.restassured.http.Header;
+import org.eclipse.edc.api.authentication.OauthServerEndToEndExtension;
 import org.eclipse.edc.iam.verifiablecredentials.spi.model.CredentialFormat;
-import org.eclipse.edc.identityhub.spi.participantcontext.ParticipantContextService;
-import org.eclipse.edc.identityhub.tests.fixtures.issuerservice.IssuerExtension;
-import org.eclipse.edc.identityhub.tests.fixtures.issuerservice.IssuerRuntime;
+import org.eclipse.edc.identityhub.spi.participantcontext.IdentityHubParticipantContextService;
+import org.eclipse.edc.identityhub.tests.fixtures.DefaultRuntimes;
+import org.eclipse.edc.identityhub.tests.fixtures.issuerservice.IssuerService;
 import org.eclipse.edc.issuerservice.spi.issuance.model.IssuanceProcess;
 import org.eclipse.edc.issuerservice.spi.issuance.model.IssuanceProcessStates;
 import org.eclipse.edc.issuerservice.spi.issuance.process.store.IssuanceProcessStore;
 import org.eclipse.edc.junit.annotations.EndToEndTest;
 import org.eclipse.edc.junit.annotations.PostgresqlIntegrationTest;
+import org.eclipse.edc.junit.extensions.ComponentRuntimeExtension;
+import org.eclipse.edc.junit.extensions.RuntimeExtension;
 import org.eclipse.edc.spi.query.Criterion;
 import org.eclipse.edc.spi.query.QuerySpec;
 import org.eclipse.edc.spi.query.SortOrder;
@@ -41,10 +44,9 @@ import java.util.Map;
 import java.util.UUID;
 
 import static io.restassured.http.ContentType.JSON;
-import static org.eclipse.edc.identityhub.tests.TestData.ISSUER_RUNTIME_ID;
-import static org.eclipse.edc.identityhub.tests.TestData.ISSUER_RUNTIME_MEM_MODULES;
 import static org.eclipse.edc.identityhub.tests.TestData.ISSUER_RUNTIME_NAME;
-import static org.eclipse.edc.identityhub.tests.TestData.ISSUER_RUNTIME_SQL_MODULES;
+import static org.eclipse.edc.identityhub.tests.fixtures.TestFunctions.authorizeOauth2;
+import static org.eclipse.edc.identityhub.tests.fixtures.TestFunctions.authorizeTokenBased;
 import static org.hamcrest.Matchers.equalTo;
 
 @SuppressWarnings("JUnitMalformedDeclaration")
@@ -52,23 +54,22 @@ public class IssuanceProcessApiEndToEndTest {
     abstract static class Tests {
 
         @AfterEach
-        void tearDown(ParticipantContextService pcService) {
+        void tearDown(IdentityHubParticipantContextService pcService) {
             pcService.query(QuerySpec.max()).getContent()
                     .forEach(pc -> pcService.deleteParticipantContext(pc.getParticipantContextId()).getContent());
 
         }
 
         @Test
-        void getIssuanceProcess(IssuerRuntime runtime, IssuanceProcessStore store) {
+        void getIssuanceProcess(IssuerService issuerService, IssuanceProcessStore store) {
             var issuer = "issuer";
-            var token = runtime.createParticipant(issuer).apiKey();
 
             var process = createIssuanceProcess(issuer);
             store.save(process);
 
-            runtime.getAdminEndpoint().baseRequest()
+            issuerService.getAdminEndpoint().baseRequest()
                     .contentType(JSON)
-                    .header(new Header("x-api-key", token))
+                    .header(authorizeUser(issuer, issuerService))
                     .get("/v1alpha/participants/%s/issuanceprocesses/%s".formatted(toBase64(issuer), process.getId()))
                     .then()
                     .log().ifValidationFails()
@@ -83,19 +84,17 @@ public class IssuanceProcessApiEndToEndTest {
         }
 
         @Test
-        void getIssuanceProcess_notAuthorized(IssuerRuntime runtime, IssuanceProcessStore store) {
+        void getIssuanceProcess_notAuthorized(IssuerService issuerService, IssuanceProcessStore store) {
             var issuer = "issuer";
             var issuer2 = "issuer2";
-            runtime.createParticipant(issuer);
+            issuerService.createParticipant(issuer);
 
             var process = createIssuanceProcess(issuer);
             store.save(process);
 
-            var token = runtime.createParticipant(issuer2).apiKey();
-
-            runtime.getAdminEndpoint().baseRequest()
+            issuerService.getAdminEndpoint().baseRequest()
                     .contentType(JSON)
-                    .header(new Header("x-api-key", token))
+                    .header(authorizeUser(issuer2, issuerService))
                     .get("/v1alpha/participants/%s/issuanceprocesses/%s".formatted(toBase64(issuer), process.getId()))
                     .then()
                     .log().ifValidationFails()
@@ -103,16 +102,15 @@ public class IssuanceProcessApiEndToEndTest {
         }
 
         @Test
-        void queryIssuanceProcesses(IssuerRuntime runtime, IssuanceProcessStore store) {
+        void queryIssuanceProcesses(IssuerService issuerService, IssuanceProcessStore store) {
             var issuer = "issuer";
-            var token = runtime.createParticipant(issuer).apiKey();
 
             var process = createIssuanceProcess(issuer);
             store.save(process);
 
-            runtime.getAdminEndpoint().baseRequest()
+            issuerService.getAdminEndpoint().baseRequest()
                     .contentType(JSON)
-                    .header(new Header("x-api-key", token))
+                    .header(authorizeUser(issuer, issuerService))
                     .body(QuerySpec.Builder.newInstance()
                             .sortField("id")
                             .sortOrder(SortOrder.ASC)
@@ -134,19 +132,17 @@ public class IssuanceProcessApiEndToEndTest {
         }
 
         @Test
-        void queryIssuanceProcesses_notAuthorized(IssuerRuntime runtime, IssuanceProcessStore store) {
+        void queryIssuanceProcesses_notAuthorized(IssuerService issuerService, IssuanceProcessStore store) {
             var issuer = "issuer";
             var issuer2 = "issuer2";
-            runtime.createParticipant(issuer);
+            issuerService.createParticipant(issuer);
 
             var process = createIssuanceProcess(issuer);
             store.save(process);
 
-            var token = runtime.createParticipant(issuer2).apiKey();
-
-            runtime.getAdminEndpoint().baseRequest()
+            issuerService.getAdminEndpoint().baseRequest()
                     .contentType(JSON)
-                    .header(new Header("x-api-key", token))
+                    .header(authorizeUser(issuer2, issuerService))
                     .body(QuerySpec.Builder.newInstance()
                             .sortField("id")
                             .sortOrder(SortOrder.ASC)
@@ -159,6 +155,8 @@ public class IssuanceProcessApiEndToEndTest {
                     .body("size()", equalTo(0));
 
         }
+
+        protected abstract Header authorizeUser(String participantContextId, IssuerService issuerService);
 
         private String toBase64(String s) {
             return Base64.getUrlEncoder().encodeToString(s.getBytes());
@@ -183,11 +181,18 @@ public class IssuanceProcessApiEndToEndTest {
     class InMemory extends Tests {
 
         @RegisterExtension
-        static final IssuerExtension ISSUER_EXTENSION = IssuerExtension.Builder.newInstance()
-                .id(ISSUER_RUNTIME_ID)
+        static final RuntimeExtension ISSUER_EXTENSION = ComponentRuntimeExtension.Builder.newInstance()
                 .name(ISSUER_RUNTIME_NAME)
-                .modules(ISSUER_RUNTIME_MEM_MODULES)
+                .modules(DefaultRuntimes.Issuer.MODULES)
+                .endpoints(DefaultRuntimes.Issuer.ENDPOINTS.build())
+                .configurationProvider(DefaultRuntimes.Issuer::config)
+                .paramProvider(IssuerService.class, IssuerService::forContext)
                 .build();
+
+        @Override
+        protected Header authorizeUser(String participantContextId, IssuerService issuerService) {
+            return authorizeTokenBased(participantContextId, issuerService);
+        }
     }
 
     @Nested
@@ -208,11 +213,85 @@ public class IssuanceProcessApiEndToEndTest {
 
         @Order(2)
         @RegisterExtension
-        static final IssuerExtension ISSUER_EXTENSION = IssuerExtension.Builder.newInstance()
-                .id(ISSUER_RUNTIME_ID)
+        static final RuntimeExtension ISSUER_EXTENSION = ComponentRuntimeExtension.Builder.newInstance()
                 .name(ISSUER_RUNTIME_NAME)
-                .modules(ISSUER_RUNTIME_SQL_MODULES)
+                .modules(DefaultRuntimes.Issuer.SQL_MODULES)
+                .endpoints(DefaultRuntimes.Issuer.ENDPOINTS.build())
+                .configurationProvider(DefaultRuntimes.Issuer::config)
                 .configurationProvider(() -> POSTGRESQL_EXTENSION.configFor(ISSUER))
+                .paramProvider(IssuerService.class, IssuerService::forContext)
                 .build();
+
+        @Override
+        protected Header authorizeUser(String participantContextId, IssuerService issuerService) {
+            return authorizeTokenBased(participantContextId, issuerService);
+        }
+    }
+
+    @Nested
+    @EndToEndTest
+    class InMemoryOauth2 extends Tests {
+        private static final String ISSUER = "issuer";
+
+        @Order(0)
+        @RegisterExtension
+        static final OauthServerEndToEndExtension OAUTH_2_EXTENSION = OauthServerEndToEndExtension.Builder.newInstance()
+                .issuer(ISSUER)
+                .signingKeyId("signing-key-id")
+                .build();
+
+        @RegisterExtension
+        static final RuntimeExtension ISSUER_EXTENSION = ComponentRuntimeExtension.Builder.newInstance()
+                .name(ISSUER_RUNTIME_NAME)
+                .modules(DefaultRuntimes.Issuer.MODULES_OAUTH2)
+                .endpoints(DefaultRuntimes.Issuer.ENDPOINTS.build())
+                .configurationProvider(DefaultRuntimes.Issuer::config)
+                .configurationProvider(OAUTH_2_EXTENSION::getConfig)
+                .paramProvider(IssuerService.class, IssuerService::forContext)
+                .build();
+
+        @Override
+        protected Header authorizeUser(String participantContextId, IssuerService issuerService) {
+            return authorizeOauth2(participantContextId, issuerService, OAUTH_2_EXTENSION.getAuthServer());
+        }
+    }
+
+    @Nested
+    @PostgresqlIntegrationTest
+    class PostgresOauth2 extends Tests {
+        @Order(0)
+        @RegisterExtension
+        static final PostgresqlEndToEndExtension POSTGRESQL_EXTENSION = new PostgresqlEndToEndExtension();
+        private static final String ISSUER = "issuer";
+
+        @Order(0)
+        @RegisterExtension
+        static final OauthServerEndToEndExtension OAUTH_2_EXTENSION = OauthServerEndToEndExtension.Builder.newInstance()
+                .issuer(ISSUER)
+                .signingKeyId("signing-key-id")
+                .build();
+        
+        @Order(2)
+        @RegisterExtension
+        static final RuntimeExtension ISSUER_EXTENSION = ComponentRuntimeExtension.Builder.newInstance()
+                .name(ISSUER_RUNTIME_NAME)
+                .modules(DefaultRuntimes.Issuer.SQL_OAUTH2_MODULES)
+                .endpoints(DefaultRuntimes.Issuer.ENDPOINTS.build())
+                .configurationProvider(DefaultRuntimes.Issuer::config)
+                .configurationProvider(OAUTH_2_EXTENSION::getConfig)
+                .configurationProvider(() -> POSTGRESQL_EXTENSION.configFor(ISSUER))
+                .paramProvider(IssuerService.class, IssuerService::forContext)
+                .build();
+
+        @Order(1)
+        @RegisterExtension
+        static final BeforeAllCallback POSTGRES_CONTAINER_STARTER = context -> {
+            POSTGRESQL_EXTENSION.createDatabase(ISSUER);
+        };
+
+        @Override
+        protected Header authorizeUser(String participantContextId, IssuerService issuerService) {
+            return authorizeOauth2(participantContextId, issuerService, OAUTH_2_EXTENSION.getAuthServer());
+        }
     }
 }

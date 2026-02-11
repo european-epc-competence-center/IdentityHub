@@ -1,27 +1,16 @@
 rootProject.name = "identity-hub"
 
-// this is needed to have access to snapshot builds of plugins
 pluginManagement {
     repositories {
         mavenLocal()
-        maven {
-            url = uri("https://oss.sonatype.org/content/repositories/snapshots/")
-        }
-        mavenCentral()
         gradlePluginPortal()
-    }
-}
-
-dependencyResolutionManagement {
-
-    repositories {
-        maven {
-            url = uri("https://oss.sonatype.org/content/repositories/snapshots/")
-        }
         mavenCentral()
-        mavenLocal()
+        maven {
+            url = uri("https://central.sonatype.com/repository/maven-snapshots/")
+        }
     }
 }
+
 // IdentityHub SPI modules
 include(":spi:identity-hub-spi")
 include(":spi:participant-context-spi")
@@ -34,7 +23,6 @@ include(":spi:sts-spi")
 // IssuerService SPI modules
 include(":spi:issuerservice:issuerservice-holder-spi")
 include(":spi:issuerservice:issuerservice-credential-spi")
-include(":spi:issuerservice:credential-revocation-spi")
 include(":spi:issuerservice:issuerservice-issuance-spi")
 
 // IdentityHub core modules
@@ -48,7 +36,6 @@ include(":core:identity-hub-did")
 include(":core:issuerservice:issuerservice-core")
 include(":core:issuerservice:issuerservice-holders")
 include(":core:issuerservice:issuerservice-credentials")
-include(":core:issuerservice:issuerservice-credential-revocation")
 include(":core:issuerservice:issuerservice-issuance")
 
 // lib modules
@@ -60,7 +47,6 @@ include(":core:lib:issuerservice-common-lib")
 // extension modules
 include(":extensions:store:sql:identity-hub-did-store-sql")
 include(":extensions:store:sql:identity-hub-credentials-store-sql")
-include(":extensions:store:sql:identity-hub-participantcontext-store-sql")
 include(":extensions:store:sql:identity-hub-keypair-store-sql")
 include(":extensions:store:sql:holder-credential-request-store-sql")
 include(":extensions:store:sql:holder-credential-offer-store-sql")
@@ -90,19 +76,20 @@ include(":protocols:dcp:dcp-identityhub:credentials-api-configuration")
 include(":protocols:dcp:dcp-identityhub:presentation-api")
 include(":protocols:dcp:dcp-identityhub:storage-api")
 include(":protocols:dcp:dcp-identityhub:credential-offer-api")
-include(":protocols:dcp:dcp-identityhub:dcp-identityhub-transform-lib")
 include(":protocols:dcp:dcp-identityhub:dcp-identityhub-core")
 
 // Identity APIs
 include(":extensions:api:identity-api")
-include(":extensions:api:identity-api:api-configuration")
-include(":extensions:api:identityhub-api-authentication")
-include(":extensions:api:lib:identityhub-api-authentication-lib")
-include(":extensions:api:identityhub-api-authorization")
+include(":extensions:api:identity-api:identity-api-configuration")
+include(":extensions:api:identity-api:identity-api-authentication-oauth2")
+include(":extensions:api:identity-api:identity-api-authorization-oauth2")
 include(":extensions:api:identity-api:participant-context-api")
 include(":extensions:api:identity-api:verifiable-credentials-api")
 include(":extensions:api:identity-api:did-api")
 include(":extensions:api:identity-api:keypair-api")
+include(":extensions:api:identityhub-api-authentication")
+include(":extensions:api:identityhub-api-authorization")
+include(":extensions:api:lib:identityhub-api-authentication-lib")
 
 // Issuer Admin API
 include(":extensions:api:issuer-admin-api:issuer-admin-api-configuration")
@@ -112,6 +99,8 @@ include(":extensions:api:issuer-admin-api:attestation-api")
 include(":extensions:api:issuer-admin-api:credential-definition-api")
 include(":extensions:api:issuer-admin-api:issuance-process-api")
 include(":extensions:api:issuer-admin-api:issuer-admin-api-authentication")
+include(":extensions:api:issuer-admin-api:issuer-admin-api-authentication-oauth2")
+include(":extensions:api:issuer-admin-api:issuer-admin-api-authorization-oauth2")
 
 // Identity API validators
 include(":extensions:api:identity-api:validators:keypair-validators")
@@ -119,25 +108,26 @@ include(":extensions:api:identity-api:validators:participant-context-validators"
 include(":extensions:api:identity-api:validators:verifiable-credential-validators")
 
 // issuance modules
-include(":extensions:issuance:issuerservice-presentation-attestations")
 include(":extensions:issuance:issuerservice-database-attestations")
+include(":extensions:issuance:issuerservice-holder-attestations")
 include(":extensions:issuance:issuerservice-issuance-rules")
 include(":extensions:issuance:local-statuslist-publisher")
 
 // other modules
 include(":launcher:identityhub")
+include(":launcher:identityhub-oauth2")
 include(":launcher:issuer-service")
-
-include(":version-catalog")
+include(":launcher:issuer-service-oauth2")
 
 // test modules
 include(":e2e-tests")
-include(":e2e-tests:identity-api-tests")
-include(":e2e-tests:runtimes:sts")
-include(":e2e-tests:bom-tests")
-include(":e2e-tests:identityhub-test-fixtures")
 include(":e2e-tests:admin-api-tests")
+include(":e2e-tests:bom-tests")
 include(":e2e-tests:dcp-issuance-tests")
+include(":e2e-tests:identity-api-tests")
+include(":e2e-tests:identityhub-test-fixtures")
+include(":e2e-tests:launcher-tests")
+include(":e2e-tests:runtimes:sts")
 include(":e2e-tests:sts-api-tests")
 include(":e2e-tests:tck-tests:presentation")
 include(":e2e-tests:tck-tests:test-attestations")
@@ -145,7 +135,9 @@ include(":e2e-tests:tck-tests:test-attestations")
 // BOM modules
 include(":dist:bom:identityhub-base-bom")
 include(":dist:bom:identityhub-bom")
+include(":dist:bom:identityhub-oauth2-bom")
 include(":dist:bom:identityhub-feature-sql-bom")
 include(":dist:bom:issuerservice-base-bom")
 include(":dist:bom:issuerservice-bom")
+include(":dist:bom:issuerservice-oauth2-bom")
 include(":dist:bom:issuerservice-feature-sql-bom")

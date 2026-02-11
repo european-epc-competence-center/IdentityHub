@@ -15,6 +15,7 @@
 package org.eclipse.edc.identityhub.spi.keypair.events;
 
 import org.eclipse.edc.identityhub.spi.keypair.model.KeyPairResource;
+import org.eclipse.edc.identityhub.spi.participantcontext.model.KeyPairUsage;
 import org.eclipse.edc.json.JacksonTypeManager;
 import org.eclipse.edc.spi.types.TypeManager;
 import org.junit.jupiter.api.Test;
@@ -30,7 +31,7 @@ class KeyPairRotatedTest {
     @Test
     void verify_serDes() {
         var evt = KeyPairRotated.Builder.newInstance()
-                .keyPairResource(KeyPairResource.Builder.newInstance().id(UUID.randomUUID().toString()).build())
+                .keyPairResource(KeyPairResource.Builder.newPresentationSigning().usage(KeyPairUsage.PRESENTATION_SIGNING, KeyPairUsage.CREDENTIAL_SIGNING, KeyPairUsage.TOKEN_SIGNING).id(UUID.randomUUID().toString()).build())
                 .keyId("key-id")
                 .participantContextId("participant-id")
                 .build();
@@ -38,6 +39,7 @@ class KeyPairRotatedTest {
         var json = typeManager.writeValueAsString(evt);
         assertThat(json).isNotNull();
 
-        assertThat(typeManager.readValue(json, KeyPairRotated.class)).usingRecursiveComparison().isEqualTo(evt);
+        assertThat(typeManager.readValue(json, KeyPairRotated.class)).usingRecursiveComparison()
+                .isEqualTo(evt);
     }
 }

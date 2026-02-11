@@ -20,8 +20,8 @@ import org.eclipse.edc.iam.verifiablecredentials.spi.model.Issuer;
 import org.eclipse.edc.iam.verifiablecredentials.spi.model.VerifiableCredential;
 import org.eclipse.edc.iam.verifiablecredentials.spi.model.VerifiableCredentialContainer;
 import org.eclipse.edc.iam.verifiablecredentials.spi.model.revocation.BitString;
-import org.eclipse.edc.identityhub.spi.participantcontext.ParticipantContextService;
-import org.eclipse.edc.identityhub.spi.participantcontext.model.ParticipantResource;
+import org.eclipse.edc.identityhub.spi.participantcontext.IdentityHubParticipantContextService;
+import org.eclipse.edc.identityhub.spi.verifiablecredentials.model.CredentialUsage;
 import org.eclipse.edc.identityhub.spi.verifiablecredentials.model.VcStatus;
 import org.eclipse.edc.identityhub.spi.verifiablecredentials.model.VerifiableCredentialResource;
 import org.eclipse.edc.identityhub.spi.verifiablecredentials.store.CredentialStore;
@@ -40,7 +40,6 @@ import org.jetbrains.annotations.Nullable;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
-import java.util.Base64;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
@@ -48,6 +47,7 @@ import java.util.UUID;
 import static java.util.Optional.ofNullable;
 import static org.eclipse.edc.issuerservice.credentials.statuslist.bitstring.BitstringConstants.BITSTRING_STATUS_LIST;
 import static org.eclipse.edc.issuerservice.credentials.statuslist.bitstring.BitstringConstants.REVOCATION;
+import static org.eclipse.edc.participantcontext.spi.types.ParticipantResource.filterByParticipantContextId;
 
 public class BitstringStatusListManager implements StatusListManager {
 
@@ -59,13 +59,13 @@ public class BitstringStatusListManager implements StatusListManager {
     private final CredentialStore store;
     private final TransactionContext transactionContext;
     private final CredentialGeneratorRegistry credentialGenerator;
-    private final ParticipantContextService participantContextService;
+    private final IdentityHubParticipantContextService participantContextService;
     private final StatusListCredentialPublisher publisher;
 
     public BitstringStatusListManager(CredentialStore store,
                                       TransactionContext transactionContext,
                                       CredentialGeneratorRegistry credentialGenerator,
-                                      ParticipantContextService participantContextService,
+                                      IdentityHubParticipantContextService participantContextService,
                                       StatusListCredentialPublisher publisher) {
         this.store = store;
         this.transactionContext = transactionContext;
@@ -145,7 +145,7 @@ public class BitstringStatusListManager implements StatusListManager {
                 .issuanceDate(now)
                 .expirationDate(now.plus(365, ChronoUnit.DAYS)) //todo: make configurable
                 .issuer(new Issuer(participantDid))
-                .type(BITSTRING_STATUS_LIST)
+                .type("BitstringStatusListCredential")
                 .build();
 
         // sign and package in resource
@@ -163,7 +163,7 @@ public class BitstringStatusListManager implements StatusListManager {
     }
 
     private VerifiableCredentialResource createCredentialResource(String participantContextId, VerifiableCredentialContainer signedCredential, String issuerDid) {
-        return VerifiableCredentialResource.Builder.newInstance()
+        return VerifiableCredentialResource.Builder.newStatusList()
                 .id(UUID.randomUUID().toString())
                 .state(VcStatus.ISSUED)
                 .metadata(Map.of(CURRENT_INDEX, 0,
@@ -194,7 +194,7 @@ public class BitstringStatusListManager implements StatusListManager {
         var bs = BitString.Builder.newInstance()
                 .size(DEFAULT_BITSTRING_SIZE) //todo: make configurable
                 .build();
-        return BitString.Writer.newInstance().encoder(Base64.getUrlEncoder()).write(bs).orElseThrow(f -> new EdcException(f.getFailureDetail()));
+        return BitString.Writer.newInstance().writeMultibase(bs).orElseThrow(f -> new EdcException(f.getFailureDetail()));
     }
 
     private @Nullable String publicUri(VerifiableCredentialResource res) {
@@ -233,8 +233,9 @@ public class BitstringStatusListManager implements StatusListManager {
 
     private QuerySpec whereTypeIsBitstringCredential(String participantContextId) {
         return QuerySpec.Builder.newInstance()
-                .filter(ParticipantResource.filterByParticipantContextId(participantContextId))
-                .filter(new Criterion("credential.credentialSubject.type", "=", BITSTRING_STATUS_LIST))
+                .filter(filterByParticipantContextId(participantContextId))
+                .filter(new Criterion("verifiableCredential.credential.credentialSubject.type", "=", BITSTRING_STATUS_LIST))
+                .filter(new Criterion("usage", "=", CredentialUsage.StatusList.toString()))
                 .build();
     }
 }

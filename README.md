@@ -7,7 +7,7 @@
 <br>
 [![build](https://img.shields.io/github/actions/workflow/status/eclipse-edc/IdentityHub/verify.yaml?branch=main&logo=GitHub&style=flat-square&label=ci)](https://github.com/eclipse-edc/IdentityHub/actions/workflows/verify.yaml?query=branch%3Amain)
 [![snapshot build](https://img.shields.io/github/actions/workflow/status/eclipse-edc/IdentityHub/trigger_snapshot.yml?branch=main&logo=GitHub&style=flat-square&label=snapshot-build)](https://github.com/eclipse-edc/IdentityHub/actions/workflows/trigger_snapshot.yml)
-[![nightly build](https://img.shields.io/github/actions/workflow/status/eclipse-edc/Release/nightly.yaml?branch=main&logo=GitHub&style=flat-square&label=nightly-build)](https://github.com/eclipse-edc/Release/actions/workflows/nightly.yaml)
+[![nightly build](https://img.shields.io/github/actions/workflow/status/eclipse-edc/Identity-Hub/nightly.yml?branch=main&logo=GitHub&style=flat-square&label=nightly-build)](https://github.com/eclipse-edc/IdentityHub/actions/workflows/nightly.yml)
 
 ---
 
@@ -89,18 +89,18 @@ docker run -d --rm --name identityhub \
             -e "WEB_HTTP_PRESENTATION_PATH=/api/presentation" \
             -e "EDC_IAM_STS_PRIVATEKEY_ALIAS=privatekey-alias" \
             -e "EDC_IAM_STS_PUBLICKEY_ID=publickey-id" \
-            identityhub:latest
+            identity-hub:latest
 ```
 
 ## Architectural concepts of IdentityHub
 
 Key architectural concepts are
-outlined [here](docs/developer/architecture/identity-trust-protocol/identity.hub.architecture.md).
+outlined [here](docs/developer/architecture/decentralized-claims-protocol/identity.hub.architecture.md).
 
 ## Module structure of IdentityHub
 
 IdentityHub's module structure and key SPIs is
-described [here](docs/developer/architecture/identity-trust-protocol/identity-hub-modules.md).
+described [here](docs/developer/architecture/decentralized-claims-protocol/identity-hub-modules.md).
 
 _Please note that some classes or functionalities mentioned there may not yet have been implemented, for example
 automatic credential renewal._

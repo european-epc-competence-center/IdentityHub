@@ -14,10 +14,10 @@
 
 package org.eclipse.edc.identityhub.sts.accountservice;
 
-import org.eclipse.edc.iam.identitytrust.sts.spi.model.StsAccount;
-import org.eclipse.edc.iam.identitytrust.sts.spi.service.StsAccountService;
-import org.eclipse.edc.iam.identitytrust.sts.spi.service.StsClientSecretGenerator;
-import org.eclipse.edc.iam.identitytrust.sts.spi.store.StsAccountStore;
+import org.eclipse.edc.iam.decentralizedclaims.sts.spi.model.StsAccount;
+import org.eclipse.edc.iam.decentralizedclaims.sts.spi.service.StsAccountService;
+import org.eclipse.edc.iam.decentralizedclaims.sts.spi.service.StsClientSecretGenerator;
+import org.eclipse.edc.iam.decentralizedclaims.sts.spi.store.StsAccountStore;
 import org.eclipse.edc.identityhub.spi.participantcontext.model.ParticipantManifest;
 import org.eclipse.edc.spi.query.QuerySpec;
 import org.eclipse.edc.spi.result.Result;
@@ -61,13 +61,12 @@ public class StsAccountServiceImpl implements StsAccountService {
         return transactionContext.execute(() -> {
 
             var client = StsAccount.Builder.newInstance()
-                    .id(manifest.getParticipantId())
-                    .name(manifest.getParticipantId())
+                    .id(manifest.getParticipantContextId())
+                    .name(manifest.getParticipantContextId())
                     .clientId(manifest.getDid())
                     .did(manifest.getDid())
-                    .privateKeyAlias(manifest.getKey().getPrivateKeyAlias())
-                    .publicKeyReference(manifest.getKey().getKeyId())
                     .secretAlias(secretAlias)
+                    .participantContextId(manifest.getParticipantContextId())
                     .build();
 
             return from(stsAccountStore.create(client).mapEmpty());
@@ -75,8 +74,8 @@ public class StsAccountServiceImpl implements StsAccountService {
     }
 
     @Override
-    public ServiceResult<Void> deleteAccount(String id) {
-        return transactionContext.execute(() -> from(stsAccountStore.deleteById(id)).compose(acct -> from(vault.deleteSecret(acct.getSecretAlias()))));
+    public ServiceResult<Void> deleteAccount(String participantContextId) {
+        return transactionContext.execute(() -> from(stsAccountStore.deleteById(participantContextId)).compose(acct -> from(vault.deleteSecret(participantContextId, acct.getSecretAlias()))));
     }
 
     @Override
@@ -96,14 +95,14 @@ public class StsAccountServiceImpl implements StsAccountService {
 
     @Override
     public ServiceResult<StsAccount> authenticate(StsAccount client, String secret) {
-        return ofNullable(vault.resolveSecret(client.getSecretAlias()))
+        return ofNullable(vault.resolveSecret(client.getParticipantContextId(), client.getSecretAlias()))
                 .filter(vaultSecret -> vaultSecret.equals(secret))
                 .map(s -> success(client))
                 .orElseGet(() -> unauthorized(format("Failed to authenticate client with id %s", client.getId())));
     }
 
     @Override
-    public ServiceResult<String> updateSecret(String id, String newSecretAlias, @Nullable String newSecret) {
+    public ServiceResult<String> updateSecret(String participantContextId, String id, String newSecretAlias, @Nullable String newSecret) {
 
         Objects.requireNonNull(newSecretAlias, "Secret alias cannot be null");
 
@@ -123,11 +122,11 @@ public class StsAccountServiceImpl implements StsAccountService {
             Result<Void> vaultInteractionResult = Result.success();
 
             if (!oldSecretAlias.equals(newSecretAlias)) {
-                vaultInteractionResult = vaultInteractionResult.merge(vault.deleteSecret(oldSecretAlias));
+                vaultInteractionResult = vaultInteractionResult.merge(vault.deleteSecret(participantContextId, oldSecretAlias));
             }
 
             var finalNewSecret = newSecret;
-            vaultInteractionResult = vaultInteractionResult.compose(v -> vault.storeSecret(newSecretAlias, finalNewSecret));
+            vaultInteractionResult = vaultInteractionResult.compose(v -> vault.storeSecret(participantContextId, newSecretAlias, finalNewSecret));
             return vaultInteractionResult.succeeded()
                     ? success(newSecretAlias)
                     : unexpected(vaultInteractionResult.getFailureDetail());

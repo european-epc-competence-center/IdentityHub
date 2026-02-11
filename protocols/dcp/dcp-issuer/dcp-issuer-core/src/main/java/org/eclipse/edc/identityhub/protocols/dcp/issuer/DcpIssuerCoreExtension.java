@@ -15,15 +15,14 @@
 package org.eclipse.edc.identityhub.protocols.dcp.issuer;
 
 import org.eclipse.edc.http.spi.EdcHttpClient;
+import org.eclipse.edc.iam.decentralizedclaims.spi.CredentialServiceUrlResolver;
 import org.eclipse.edc.iam.did.spi.resolution.DidPublicKeyResolver;
 import org.eclipse.edc.iam.did.spi.resolution.DidResolverRegistry;
-import org.eclipse.edc.iam.identitytrust.spi.CredentialServiceUrlResolver;
 import org.eclipse.edc.identityhub.protocols.dcp.issuer.spi.DcpIssuerMetadataService;
 import org.eclipse.edc.identityhub.protocols.dcp.issuer.spi.DcpIssuerService;
 import org.eclipse.edc.identityhub.protocols.dcp.spi.DcpHolderTokenVerifier;
 import org.eclipse.edc.identityhub.protocols.dcp.spi.DcpProfileRegistry;
 import org.eclipse.edc.identityhub.spi.authentication.ParticipantSecureTokenService;
-import org.eclipse.edc.identityhub.spi.participantcontext.store.ParticipantContextStore;
 import org.eclipse.edc.issuerservice.spi.holder.store.HolderStore;
 import org.eclipse.edc.issuerservice.spi.issuance.attestation.AttestationPipeline;
 import org.eclipse.edc.issuerservice.spi.issuance.credentialdefinition.CredentialDefinitionService;
@@ -31,6 +30,7 @@ import org.eclipse.edc.issuerservice.spi.issuance.delivery.CredentialStorageClie
 import org.eclipse.edc.issuerservice.spi.issuance.process.store.IssuanceProcessStore;
 import org.eclipse.edc.issuerservice.spi.issuance.rule.CredentialRuleDefinitionEvaluator;
 import org.eclipse.edc.jwt.validation.jti.JtiValidationStore;
+import org.eclipse.edc.participantcontext.spi.store.ParticipantContextStore;
 import org.eclipse.edc.runtime.metamodel.annotation.Extension;
 import org.eclipse.edc.runtime.metamodel.annotation.Inject;
 import org.eclipse.edc.runtime.metamodel.annotation.Provider;
@@ -115,6 +115,8 @@ public class DcpIssuerCoreExtension implements ServiceExtension {
     private boolean activateJtiCheck;
     @Inject(required = false)
     private JtiValidationStore jtiValidationStore;
+    @Setting(description = "Allow anonymous onboarding", defaultValue = "false", key = "edc.issuance.anonymous.allowed")
+    private boolean allowAnonymousCredentialRequest;
 
     @Override
     public void initialize(ServiceExtensionContext context) {
@@ -138,7 +140,7 @@ public class DcpIssuerCoreExtension implements ServiceExtension {
 
     @Provider
     public DcpHolderTokenVerifier createTokenVerifier() {
-        return new DcpHolderTokenVerifierImpl(rulesRegistry, tokenValidationService, didPublicKeyResolver, holderStore);
+        return new DcpHolderTokenVerifierImpl(rulesRegistry, tokenValidationService, didPublicKeyResolver, holderStore, allowAnonymousCredentialRequest);
     }
 
     @Provider

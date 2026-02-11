@@ -26,7 +26,7 @@ import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.ws.rs.core.SecurityContext;
 import org.eclipse.edc.identityhub.spi.participantcontext.model.CreateParticipantContextResponse;
-import org.eclipse.edc.identityhub.spi.participantcontext.model.ParticipantContext;
+import org.eclipse.edc.identityhub.spi.participantcontext.model.IdentityHubParticipantContext;
 import org.eclipse.edc.identityhub.spi.participantcontext.model.ParticipantManifest;
 import org.eclipse.edc.web.spi.ApiErrorDetail;
 
@@ -36,7 +36,6 @@ import java.util.List;
 @OpenAPIDefinition(info = @Info(description = "This is the Identity API for manipulating ParticipantContexts", title = "ParticipantContext Management API", version = "1"))
 @Tag(name = "Participant Context")
 public interface ParticipantContextApi {
-
 
     @Operation(description = "Creates a new ParticipantContext object.",
             operationId = "createParticipant",
@@ -54,12 +53,11 @@ public interface ParticipantContextApi {
     )
     CreateParticipantContextResponse createParticipant(ParticipantManifest manifest);
 
-
     @Operation(description = "Gets ParticipantContexts by ID.",
             operationId = "getParticipant",
             responses = {
                     @ApiResponse(responseCode = "200", description = "The list of ParticipantContexts.",
-                            content = @Content(schema = @Schema(implementation = ParticipantContext.class))),
+                            content = @Content(schema = @Schema(implementation = IdentityHubParticipantContext.class))),
                     @ApiResponse(responseCode = "400", description = "Request body was malformed, or the request could not be processed",
                             content = @Content(array = @ArraySchema(schema = @Schema(implementation = ApiErrorDetail.class)), mediaType = "application/json")),
                     @ApiResponse(responseCode = "401", description = "The request could not be completed, because either the authentication was missing or was not valid.",
@@ -68,7 +66,7 @@ public interface ParticipantContextApi {
                             content = @Content(array = @ArraySchema(schema = @Schema(implementation = ApiErrorDetail.class)), mediaType = "application/json"))
             }
     )
-    ParticipantContext getParticipant(String participantContextId, SecurityContext securityContext);
+    IdentityHubParticipantContext getParticipant(String participantContextId, SecurityContext securityContext);
 
     @Operation(description = "Regenerates the API token for a ParticipantContext and returns the new token.",
             operationId = "regenerateParticipantToken",
@@ -90,7 +88,7 @@ public interface ParticipantContextApi {
             requestBody = @RequestBody(content = @Content(schema = @Schema(implementation = ParticipantManifest.class), mediaType = "application/json")),
             parameters = {@Parameter(name = "isActive", description = "Whether the participantContext should be activated or deactivated. Defaults to 'false'")},
             responses = {
-                    @ApiResponse(responseCode = "204", description = "The ParticipantContext was activated/deactivated successfully", content = {@Content(schema = @Schema(implementation = String.class))}),
+                    @ApiResponse(responseCode = "204", description = "The ParticipantContext was activated/deactivated successfully"),
                     @ApiResponse(responseCode = "400", description = "Request body was malformed, or the request could not be processed",
                             content = @Content(array = @ArraySchema(schema = @Schema(implementation = ApiErrorDetail.class)), mediaType = "application/json")),
                     @ApiResponse(responseCode = "401", description = "The request could not be completed, because either the authentication was missing or was not valid.",
@@ -104,7 +102,7 @@ public interface ParticipantContextApi {
     @Operation(description = "Delete a ParticipantContext.",
             operationId = "deleteParticipant",
             responses = {
-                    @ApiResponse(responseCode = "204", description = "The ParticipantContext was deleted successfully", content = {@Content(schema = @Schema(implementation = String.class))}),
+                    @ApiResponse(responseCode = "204", description = "The ParticipantContext was deleted successfully"),
                     @ApiResponse(responseCode = "400", description = "Request body was malformed, or the request could not be processed",
                             content = @Content(array = @ArraySchema(schema = @Schema(implementation = ApiErrorDetail.class)), mediaType = "application/json")),
                     @ApiResponse(responseCode = "401", description = "The request could not be completed, because either the authentication was missing or was not valid.",
@@ -137,12 +135,12 @@ public interface ParticipantContextApi {
                     @Parameter(name = "limit", description = "the page size. defaults to 50")},
             responses = {
                     @ApiResponse(responseCode = "200", description = "The list of ParticipantContexts.",
-                            content = @Content(array = @ArraySchema(schema = @Schema(implementation = ParticipantContext.class)))),
+                            content = @Content(array = @ArraySchema(schema = @Schema(implementation = IdentityHubParticipantContext.class)))),
                     @ApiResponse(responseCode = "401", description = "The request could not be completed, because either the authentication was missing or was not valid.",
                             content = @Content(array = @ArraySchema(schema = @Schema(implementation = ApiErrorDetail.class)), mediaType = "application/json")),
                     @ApiResponse(responseCode = "400", description = "The query was malformed or was not understood by the server.",
                             content = @Content(array = @ArraySchema(schema = @Schema(implementation = ApiErrorDetail.class)), mediaType = "application/json")),
             }
     )
-    Collection<ParticipantContext> getAllParticipants(Integer offset, Integer limit);
+    Collection<IdentityHubParticipantContext> getAllParticipants(Integer offset, Integer limit);
 }

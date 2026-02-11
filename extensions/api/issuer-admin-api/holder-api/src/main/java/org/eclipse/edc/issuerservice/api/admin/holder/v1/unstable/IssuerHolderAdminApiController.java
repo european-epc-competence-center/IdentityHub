@@ -14,6 +14,7 @@
 
 package org.eclipse.edc.issuerservice.api.admin.holder.v1.unstable;
 
+import jakarta.annotation.security.RolesAllowed;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.POST;
@@ -24,9 +25,11 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.Context;
 import jakarta.ws.rs.core.Response;
 import jakarta.ws.rs.core.SecurityContext;
+import org.eclipse.edc.api.auth.spi.AuthorizationService;
+import org.eclipse.edc.api.auth.spi.ParticipantPrincipal;
+import org.eclipse.edc.api.auth.spi.RequiredScope;
 import org.eclipse.edc.identityhub.api.Versions;
-import org.eclipse.edc.identityhub.spi.authorization.AuthorizationService;
-import org.eclipse.edc.identityhub.spi.participantcontext.model.ParticipantContext;
+import org.eclipse.edc.identityhub.spi.participantcontext.model.IdentityHubParticipantContext;
 import org.eclipse.edc.issuerservice.api.admin.holder.v1.unstable.model.HolderDto;
 import org.eclipse.edc.issuerservice.spi.holder.HolderService;
 import org.eclipse.edc.issuerservice.spi.holder.model.Holder;
@@ -38,7 +41,7 @@ import java.util.Collection;
 
 import static jakarta.ws.rs.core.MediaType.APPLICATION_JSON;
 import static org.eclipse.edc.identityhub.spi.participantcontext.ParticipantContextId.onEncoded;
-import static org.eclipse.edc.identityhub.spi.participantcontext.model.ParticipantResource.filterByParticipantContextId;
+import static org.eclipse.edc.participantcontext.spi.types.ParticipantResource.filterByParticipantContextId;
 import static org.eclipse.edc.web.spi.exception.ServiceResultHandler.exceptionMapper;
 
 @Consumes(APPLICATION_JSON)
@@ -55,43 +58,53 @@ public class IssuerHolderAdminApiController implements IssuerHolderAdminApi {
     }
 
     @POST
+    @RequiredScope("issuer-admin-api:write")
+    @RolesAllowed({ParticipantPrincipal.ROLE_PARTICIPANT, ParticipantPrincipal.ROLE_ADMIN, ParticipantPrincipal.ROLE_PROVISIONER})
     @Override
     public Response addHolder(@PathParam("participantContextId") String participantContextId, HolderDto holder, @Context SecurityContext context) {
-        var decodedParticipantId = onEncoded(participantContextId).orElseThrow(InvalidRequestException::new);
-        return authorizationService.isAuthorized(context, decodedParticipantId, ParticipantContext.class)
-                .compose(u -> holderService.createHolder(holder.toHolder(decodedParticipantId)))
+        var decodedParticipantContextId = onEncoded(participantContextId).orElseThrow(InvalidRequestException::new);
+        return authorizationService.authorize(context, decodedParticipantContextId, decodedParticipantContextId, IdentityHubParticipantContext.class)
+                .compose(u -> holderService.createHolder(holder.toHolder(decodedParticipantContextId)))
                 .map(v -> Response.created(URI.create(Versions.UNSTABLE + "/participants/%s/holders/%s".formatted(participantContextId, holder.id()))).build())
                 .orElseThrow(exceptionMapper(Holder.class, holder.id()));
     }
 
     @PUT
+    @RequiredScope("issuer-admin-api:write")
+    @RolesAllowed({ParticipantPrincipal.ROLE_PARTICIPANT, ParticipantPrincipal.ROLE_ADMIN})
     @Override
     public Response updateHolder(@PathParam("participantContextId") String participantContextId, HolderDto holder, @Context SecurityContext context) {
-        var decodedParticipantId = onEncoded(participantContextId).orElseThrow(InvalidRequestException::new);
-        return authorizationService.isAuthorized(context, holder.id(), Holder.class)
-                .compose(u -> holderService.updateHolder(holder.toHolder(decodedParticipantId)))
+        var decodedParticipantContextId = onEncoded(participantContextId).orElseThrow(InvalidRequestException::new);
+        return authorizationService.authorize(context, decodedParticipantContextId, holder.id(), Holder.class)
+                .compose(u -> holderService.updateHolder(holder.toHolder(decodedParticipantContextId)))
                 .map(v -> Response.ok().build())
                 .orElseThrow(exceptionMapper(Holder.class, holder.id()));
     }
 
     @GET
+    @RequiredScope("issuer-admin-api:read")
+    @RolesAllowed({ParticipantPrincipal.ROLE_PARTICIPANT, ParticipantPrincipal.ROLE_ADMIN})
     @Path("/{holderId}")
     @Override
     public Holder getHolderById(@PathParam("participantContextId") String participantContextId, @PathParam("holderId") String holderId, @Context SecurityContext context) {
-        return authorizationService.isAuthorized(context, holderId, Holder.class)
+        var decodedParticipantContextId = onEncoded(participantContextId).orElseThrow(InvalidRequestException::new);
+
+        return authorizationService.authorize(context, decodedParticipantContextId, holderId, Holder.class)
                 .compose(u -> holderService.findById(holderId))
                 .orElseThrow(exceptionMapper(Holder.class, holderId));
     }
 
     @POST
+    @RequiredScope("issuer-admin-api:read")
+    @RolesAllowed({ParticipantPrincipal.ROLE_PARTICIPANT, ParticipantPrincipal.ROLE_ADMIN})
     @Path("/query")
     @Override
     public Collection<Holder> queryHolders(@PathParam("participantContextId") String participantContextId, QuerySpec querySpec, @Context SecurityContext context) {
-        var decodedParticipantId = onEncoded(participantContextId).orElseThrow(InvalidRequestException::new);
-        var spec = querySpec.toBuilder().filter(filterByParticipantContextId(decodedParticipantId)).build();
+        var decodedParticipantContextId = onEncoded(participantContextId).orElseThrow(InvalidRequestException::new);
+        var spec = querySpec.toBuilder().filter(filterByParticipantContextId(decodedParticipantContextId)).build();
         return holderService.queryHolders(spec)
                 .map(collection -> collection.stream()
-                        .filter(holder -> authorizationService.isAuthorized(context, holder.getHolderId(), Holder.class).succeeded()).toList())
+                        .filter(holder -> authorizationService.authorize(context, decodedParticipantContextId, holder.getHolderId(), Holder.class).succeeded()).toList())
                 .orElseThrow(exceptionMapper(Holder.class, null));
     }
 }

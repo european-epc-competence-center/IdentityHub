@@ -22,9 +22,9 @@ import org.eclipse.edc.identityhub.spi.keypair.model.KeyPairResource;
 import org.eclipse.edc.identityhub.spi.keypair.model.KeyPairState;
 import org.eclipse.edc.identityhub.spi.keypair.store.KeyPairResourceStore;
 import org.eclipse.edc.identityhub.spi.participantcontext.model.KeyDescriptor;
-import org.eclipse.edc.identityhub.spi.participantcontext.model.ParticipantContext;
-import org.eclipse.edc.identityhub.spi.participantcontext.model.ParticipantContextState;
-import org.eclipse.edc.identityhub.spi.participantcontext.store.ParticipantContextStore;
+import org.eclipse.edc.participantcontext.spi.store.ParticipantContextStore;
+import org.eclipse.edc.participantcontext.spi.types.ParticipantContext;
+import org.eclipse.edc.participantcontext.spi.types.ParticipantContextState;
 import org.eclipse.edc.spi.query.QuerySpec;
 import org.eclipse.edc.spi.result.StoreResult;
 import org.eclipse.edc.spi.security.Vault;
@@ -39,8 +39,14 @@ import java.time.Duration;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.eclipse.edc.identityhub.spi.participantcontext.model.IdentityHubParticipantContext.API_TOKEN_ALIAS;
+import static org.eclipse.edc.identityhub.spi.participantcontext.model.KeyPairUsage.CREDENTIAL_SIGNING;
+import static org.eclipse.edc.identityhub.spi.participantcontext.model.KeyPairUsage.PRESENTATION_SIGNING;
+import static org.eclipse.edc.identityhub.spi.participantcontext.model.KeyPairUsage.TOKEN_SIGNING;
 import static org.eclipse.edc.junit.assertions.AbstractResultAssert.assertThat;
 import static org.eclipse.edc.spi.result.StoreResult.success;
 import static org.mockito.ArgumentMatchers.any;
@@ -67,7 +73,10 @@ class KeyPairServiceImplTest {
     @BeforeEach
     void setup() {
         when(participantContextServiceMock.query(any(QuerySpec.class)))
-                .thenReturn(StoreResult.success(List.of(ParticipantContext.Builder.newInstance().participantContextId(PARTICIPANT_ID).apiTokenAlias("apitoken-alias").build())));
+                .thenReturn(StoreResult.success(List.of(ParticipantContext.Builder.newInstance()
+                        .participantContextId(PARTICIPANT_ID)
+                        .identity("did:example:123")
+                        .property(API_TOKEN_ALIAS, "apitoken-alias").build())));
     }
 
     @ParameterizedTest(name = "make default: {0}")
@@ -98,7 +107,7 @@ class KeyPairServiceImplTest {
 
         assertThat(keyPairService.addKeyPair(PARTICIPANT_ID, key, makeDefault)).isSucceeded();
 
-        verify(vault).storeSecret(eq(key.getPrivateKeyAlias()), anyString());
+        verify(vault).storeSecret(anyString(), eq(key.getPrivateKeyAlias()), anyString());
         verify(keyPairResourceStore).create(argThat(kpr -> kpr.isDefaultPair() == makeDefault &&
                 kpr.getParticipantContextId().equals(PARTICIPANT_ID) &&
                 kpr.getState() == KeyPairState.ACTIVATED.code()));
@@ -123,7 +132,7 @@ class KeyPairServiceImplTest {
 
         assertThat(keyPairService.addKeyPair(PARTICIPANT_ID, key, true)).isSucceeded();
 
-        verify(vault).storeSecret(eq(key.getPrivateKeyAlias()), anyString());
+        verify(vault).storeSecret(anyString(), eq(key.getPrivateKeyAlias()), anyString());
         //expect the query for other active keys at least once, if the new key is inactive
         verify(keyPairResourceStore, never()).query(any());
         verify(keyPairResourceStore).create(argThat(kpr -> kpr.isDefaultPair() && kpr.getParticipantContextId().equals(PARTICIPANT_ID) && kpr.getState() == KeyPairState.ACTIVATED.code()));
@@ -148,7 +157,7 @@ class KeyPairServiceImplTest {
 
         assertThat(keyPairService.addKeyPair(PARTICIPANT_ID, key, true)).isSucceeded();
 
-        verify(vault).storeSecret(eq(key.getPrivateKeyAlias()), anyString());
+        verify(vault).storeSecret(anyString(), eq(key.getPrivateKeyAlias()), anyString());
         //expect the query for other active keys at least once, if the new key is inactive
         verify(keyPairResourceStore, times(1)).query(any());
         verify(keyPairResourceStore).create(argThat(kpr -> kpr.isDefaultPair() && kpr.getParticipantContextId().equals(PARTICIPANT_ID) && kpr.getState() == KeyPairState.CREATED.code()));
@@ -169,7 +178,8 @@ class KeyPairServiceImplTest {
     void addKeyPair_whenParticipantDeactivated_shouldFail() {
         var pc = ParticipantContext.Builder.newInstance()
                 .participantContextId(PARTICIPANT_ID)
-                .apiTokenAlias("apitoken-alias")
+                .identity("did:example:123")
+                .property(API_TOKEN_ALIAS, "apitoken-alias")
                 .state(ParticipantContextState.DEACTIVATED)
                 .build();
         when(participantContextServiceMock.query(any(QuerySpec.class))).thenReturn(StoreResult.success(List.of(pc)));
@@ -198,7 +208,7 @@ class KeyPairServiceImplTest {
         verify(keyPairResourceStore).create(any());
         // new key is set to active - expect an update in the DB
         verify(keyPairResourceStore).update(argThat(kpr -> !kpr.getId().equals(oldId) && kpr.getState() == KeyPairState.ACTIVATED.code()));
-        verify(vault).deleteSecret(eq(oldKey.getPrivateKeyAlias())); //deletes old private key
+        verify(vault).deleteSecret(anyString(), eq(oldKey.getPrivateKeyAlias())); //deletes old private key
         verify(observableMock, times(3)).invokeForEach(any()); // 1 for rotate, 1 for add, 1 for update
         verifyNoMoreInteractions(keyPairResourceStore, vault, observableMock);
     }
@@ -215,7 +225,7 @@ class KeyPairServiceImplTest {
 
         verify(keyPairResourceStore).query(any());
         verify(keyPairResourceStore).update(argThat(kpr -> kpr.getId().equals(oldId)));
-        verify(vault).deleteSecret(eq(oldKey.getPrivateKeyAlias())); //deletes old private key
+        verify(vault).deleteSecret(anyString(), eq(oldKey.getPrivateKeyAlias())); //deletes old private key
         verify(observableMock).invokeForEach(any());
         verifyNoMoreInteractions(keyPairResourceStore, vault, observableMock);
     }
@@ -240,8 +250,8 @@ class KeyPairServiceImplTest {
         verify(keyPairResourceStore).create(any());
         // new key is set to active - expect an update in the DB
         verify(keyPairResourceStore).update(argThat(kpr -> !kpr.getId().equals(oldId) && kpr.getState() == KeyPairState.ACTIVATED.code()));
-        verify(vault).deleteSecret(eq(oldKey.getPrivateKeyAlias())); //deletes old private key
-        verify(vault).storeSecret(eq(newKey.getPrivateKeyAlias()), anyString());
+        verify(vault).deleteSecret(anyString(), eq(oldKey.getPrivateKeyAlias())); //deletes old private key
+        verify(vault).storeSecret(anyString(), eq(newKey.getPrivateKeyAlias()), anyString());
         verify(observableMock, times(3)).invokeForEach(any()); // 1 for rotate, 1 for add
         verifyNoMoreInteractions(keyPairResourceStore, vault, observableMock);
     }
@@ -266,8 +276,8 @@ class KeyPairServiceImplTest {
         verify(keyPairResourceStore).create(argThat(KeyPairResource::isDefaultPair));
         // new key is set to active - expect an update in the DB
         verify(keyPairResourceStore).update(argThat(kpr -> !kpr.getId().equals(oldId) && kpr.getState() == KeyPairState.ACTIVATED.code()));
-        verify(vault).deleteSecret(eq(oldKey.getPrivateKeyAlias())); //deletes old private key
-        verify(vault).storeSecret(eq(newKey.getPrivateKeyAlias()), anyString());
+        verify(vault).deleteSecret(anyString(), eq(oldKey.getPrivateKeyAlias())); //deletes old private key
+        verify(vault).storeSecret(anyString(), eq(newKey.getPrivateKeyAlias()), anyString());
         verify(observableMock, times(3)).invokeForEach(any()); //1 for revoke, 1 for add
         verifyNoMoreInteractions(keyPairResourceStore, vault, observableMock);
     }
@@ -299,7 +309,7 @@ class KeyPairServiceImplTest {
 
         verify(keyPairResourceStore).query(any());
         verify(keyPairResourceStore).update(argThat(kpr -> kpr.getId().equals(oldId) && kpr.getState() == KeyPairState.REVOKED.code()));
-        verify(vault).deleteSecret(oldKey.getPrivateKeyAlias());
+        verify(vault).deleteSecret(anyString(), eq(oldKey.getPrivateKeyAlias()));
         verify(keyPairResourceStore).create(argThat(kpr -> !kpr.isDefaultPair()));
         // new key is set to active - expect an update in the DB
         verify(keyPairResourceStore).update(argThat(kpr -> !kpr.getId().equals(oldId) && kpr.getState() == KeyPairState.ACTIVATED.code()));
@@ -316,7 +326,7 @@ class KeyPairServiceImplTest {
 
         verify(keyPairResourceStore).query(any());
         verify(keyPairResourceStore).update(argThat(kpr -> kpr.getId().equals(oldId) && kpr.getState() == KeyPairState.REVOKED.code()));
-        verify(vault).deleteSecret(oldKey.getPrivateKeyAlias());
+        verify(vault).deleteSecret(anyString(), eq(oldKey.getPrivateKeyAlias()));
         verify(observableMock).invokeForEach(any());
         verifyNoMoreInteractions(keyPairResourceStore, vault, observableMock);
     }
@@ -333,7 +343,7 @@ class KeyPairServiceImplTest {
 
         verify(keyPairResourceStore).query(any());
         verify(keyPairResourceStore).update(argThat(kpr -> kpr.getId().equals(oldId) && kpr.getState() == KeyPairState.REVOKED.code()));
-        verify(vault).deleteSecret(oldKey.getPrivateKeyAlias());
+        verify(vault).deleteSecret(anyString(), eq(oldKey.getPrivateKeyAlias()));
         verify(keyPairResourceStore).create(argThat(KeyPairResource::isDefaultPair));
         // new key is set to active - expect an update in the DB
         verify(keyPairResourceStore).update(argThat(kpr -> !kpr.getId().equals(oldId) && kpr.getState() == KeyPairState.ACTIVATED.code()));
@@ -354,7 +364,7 @@ class KeyPairServiceImplTest {
         // queries twice, because the key is not active, tries to determine whether there are other active keys
         verify(keyPairResourceStore, times(2)).query(any());
         verify(keyPairResourceStore).update(argThat(kpr -> kpr.getId().equals(oldId) && kpr.getState() == KeyPairState.REVOKED.code()));
-        verify(vault).deleteSecret(oldKey.getPrivateKeyAlias());
+        verify(vault).deleteSecret(anyString(), eq(oldKey.getPrivateKeyAlias()));
         verify(keyPairResourceStore).create(argThat(KeyPairResource::isDefaultPair));
         // new key is set to inactive, do not expect a DB update
         verify(observableMock, times(2)).invokeForEach(any()); // 1 for revoke, 1 for add
@@ -371,7 +381,7 @@ class KeyPairServiceImplTest {
 
         verify(keyPairResourceStore).query(any());
         verify(keyPairResourceStore).update(argThat(kpr -> kpr.getId().equals(oldId) && kpr.getState() == KeyPairState.REVOKED.code()));
-        verify(vault).deleteSecret(oldKey.getPrivateKeyAlias());
+        verify(vault).deleteSecret(anyString(), eq(oldKey.getPrivateKeyAlias()));
         verify(observableMock).invokeForEach(any());
         verifyNoMoreInteractions(keyPairResourceStore, vault, observableMock);
     }
@@ -429,8 +439,107 @@ class KeyPairServiceImplTest {
                 .isEqualTo("A KeyPairResource with ID 'notexists' does not exist.");
     }
 
+    @Test
+    void getActiveKeyPairForUsage_singleKeyPair() {
+        var keyPair = createKeyPairResource()
+                .usage(PRESENTATION_SIGNING)
+                .state(KeyPairState.ACTIVATED.code())
+                .build();
+
+        when(keyPairResourceStore.query(any())).thenReturn(success(List.of(keyPair)));
+
+        var result = keyPairService.getActiveKeyPairForUsage(PARTICIPANT_ID, PRESENTATION_SIGNING);
+
+        assertThat(result).isSucceeded()
+                .satisfies(kp -> assertThat(kp.getId()).isEqualTo(keyPair.getId()));
+    }
+
+    @Test
+    void getActiveKeyPairForUsage_multipleKeyPairs_oneIsDefault() {
+        var defaultKeyPair = createKeyPairResource()
+                .usage(CREDENTIAL_SIGNING)
+                .state(KeyPairState.ACTIVATED.code())
+                .isDefaultPair(true)
+                .build();
+
+        var nonDefaultKeyPair = createKeyPairResource()
+                .usage(CREDENTIAL_SIGNING)
+                .state(KeyPairState.ACTIVATED.code())
+                .isDefaultPair(false)
+                .build();
+
+        when(keyPairResourceStore.query(any())).thenReturn(success(List.of(defaultKeyPair, nonDefaultKeyPair)));
+
+        var result = keyPairService.getActiveKeyPairForUsage(PARTICIPANT_ID, CREDENTIAL_SIGNING);
+
+        assertThat(result).isSucceeded()
+                .satisfies(kp -> assertThat(kp.getId()).isEqualTo(defaultKeyPair.getId()));
+    }
+
+    @Test
+    void getActiveKeyPairForUsage_multipleKeyPairs_noneIsDefault() {
+        var keyPair1 = createKeyPairResource()
+                .usage((TOKEN_SIGNING))
+                .state(KeyPairState.ACTIVATED.code())
+                .isDefaultPair(false)
+                .build();
+
+        var keyPair2 = createKeyPairResource()
+                .usage((TOKEN_SIGNING))
+                .state(KeyPairState.ACTIVATED.code())
+                .isDefaultPair(false)
+                .build();
+
+        when(keyPairResourceStore.query(any())).thenReturn(success(List.of(keyPair1, keyPair2)));
+
+        var result = keyPairService.getActiveKeyPairForUsage(PARTICIPANT_ID, TOKEN_SIGNING);
+
+        assertThat(result).isFailed()
+                .detail().isEqualTo("Multiple key-pairs found for signing credentials, but none was marked as 'default'");
+    }
+
+    @Test
+    void getActiveKeyPairForUsage_noMatchingKeyPairs() {
+        var keyPair = createKeyPairResource()
+                .usage(Set.of(PRESENTATION_SIGNING))
+                .state(KeyPairState.ACTIVATED.code())
+                .build();
+
+        when(keyPairResourceStore.query(any())).thenReturn(success(List.of(keyPair)));
+
+        var result = keyPairService.getActiveKeyPairForUsage(PARTICIPANT_ID, CREDENTIAL_SIGNING);
+
+        assertThat(result).isFailed()
+                .detail().isEqualTo("No active key pair found for participant '%s' with usage 'CREDENTIAL_SIGNING'".formatted(PARTICIPANT_ID));
+    }
+
+    @Test
+    void getActiveKeyPairForUsage_storeQueryFails() {
+        when(keyPairResourceStore.query(any())).thenReturn(StoreResult.notFound("Store error"));
+
+        var result = keyPairService.getActiveKeyPairForUsage(PARTICIPANT_ID, TOKEN_SIGNING);
+
+        assertThat(result).isFailed()
+                .detail().contains("Error obtaining private key for participant '%s'".formatted(PARTICIPANT_ID));
+    }
+
+    @Test
+    void getActiveKeyPairForUsage_keyPairWithMultipleUsages() {
+        var keyPair = createKeyPairResource()
+                .usage(Set.of(PRESENTATION_SIGNING, CREDENTIAL_SIGNING))
+                .state(KeyPairState.ACTIVATED.code())
+                .build();
+
+        when(keyPairResourceStore.query(any())).thenReturn(success(List.of(keyPair)));
+
+        var result = keyPairService.getActiveKeyPairForUsage(PARTICIPANT_ID, CREDENTIAL_SIGNING);
+
+        assertThat(result).isSucceeded()
+                .satisfies(kp -> assertThat(kp.getId()).isEqualTo(keyPair.getId()));
+    }
+
     private KeyPairResource.Builder createKeyPairResource() {
-        return KeyPairResource.Builder.newInstance()
+        return KeyPairResource.Builder.newTokenSigning()
                 .id(UUID.randomUUID().toString())
                 .keyId("test-key-1")
                 .privateKeyAlias("private-key-alias")
@@ -441,7 +550,9 @@ class KeyPairServiceImplTest {
 
     @NotNull
     private KeyDescriptor.Builder createKey() {
-        return KeyDescriptor.Builder.newInstance().keyId("test-kie")
+        return KeyDescriptor.Builder.newInstance()
+                .keyId("test-kid")
+                .usage(Set.of(PRESENTATION_SIGNING))
                 .privateKeyAlias("private-alias")
                 .publicKeyJwk(createJwk());
     }

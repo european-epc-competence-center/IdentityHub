@@ -257,12 +257,12 @@ class CredentialStatusCheckServiceImplTest {
 
     private VerifiableCredentialResource.Builder createCredentialBuilder(VerifiableCredential credential) {
 
-        return VerifiableCredentialResource.Builder.newInstance()
+        return VerifiableCredentialResource.Builder.newHolder()
                 .issuerId("test-issuer")
                 .holderId("test-holder")
                 .state(VcStatus.ISSUED)
                 .participantContextId("participant-id")
-                .credential(new VerifiableCredentialContainer("raw-vc-content", CredentialFormat.JSON_LD, credential))
+                .credential(new VerifiableCredentialContainer("raw-vc-content", CredentialFormat.VC1_0_LD, credential))
                 .id(UUID.randomUUID().toString());
     }
 

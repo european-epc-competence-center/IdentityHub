@@ -16,8 +16,8 @@ package org.eclipse.edc.identityhub.api.configuration;
 
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import jakarta.ws.rs.core.SecurityContext;
-import org.eclipse.edc.identityhub.spi.authorization.AuthorizationService;
-import org.eclipse.edc.identityhub.spi.participantcontext.model.ParticipantResource;
+import org.eclipse.edc.api.auth.spi.AuthorizationService;
+import org.eclipse.edc.participantcontext.spi.types.ParticipantResource;
 import org.eclipse.edc.runtime.metamodel.annotation.Configuration;
 import org.eclipse.edc.runtime.metamodel.annotation.Extension;
 import org.eclipse.edc.runtime.metamodel.annotation.Inject;
@@ -35,7 +35,7 @@ import org.eclipse.edc.web.spi.configuration.PortMapping;
 import org.eclipse.edc.web.spi.configuration.PortMappingRegistry;
 
 import java.io.IOException;
-import java.util.function.Function;
+import java.util.function.BiFunction;
 import java.util.stream.Stream;
 
 import static org.eclipse.edc.identityhub.api.configuration.IssuerAdminApiConfigurationExtension.NAME;
@@ -101,12 +101,12 @@ public class IssuerAdminApiConfigurationExtension implements ServiceExtension {
     private static class AllowAllAuthorizationService implements AuthorizationService {
 
         @Override
-        public ServiceResult<Void> isAuthorized(SecurityContext securityContext, String resourceId, Class<? extends ParticipantResource> resourceClass) {
+        public ServiceResult<Void> authorize(SecurityContext securityContext, String resourceOwnerId, String resourceId, Class<? extends ParticipantResource> resourceClass) {
             return ServiceResult.success();
         }
 
         @Override
-        public void addLookupFunction(Class<?> resourceClass, Function<String, ParticipantResource> checkFunction) {
+        public void addLookupFunction(Class<?> resourceClass, BiFunction<String, String, ParticipantResource> checkFunction) {
 
         }
 

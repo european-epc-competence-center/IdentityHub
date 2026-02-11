@@ -17,10 +17,11 @@ package org.eclipse.edc.identityhub.participantcontext;
 import org.eclipse.edc.iam.did.spi.document.DidDocument;
 import org.eclipse.edc.identityhub.spi.did.DidDocumentService;
 import org.eclipse.edc.identityhub.spi.keypair.KeyPairService;
-import org.eclipse.edc.identityhub.spi.participantcontext.ParticipantContextService;
+import org.eclipse.edc.identityhub.spi.participantcontext.IdentityHubParticipantContextService;
 import org.eclipse.edc.identityhub.spi.participantcontext.events.ParticipantContextCreated;
 import org.eclipse.edc.identityhub.spi.participantcontext.events.ParticipantContextDeleting;
-import org.eclipse.edc.identityhub.spi.participantcontext.model.ParticipantContext;
+import org.eclipse.edc.identityhub.spi.participantcontext.model.IdentityHubParticipantContext;
+import org.eclipse.edc.identityhub.spi.participantcontext.model.KeyDescriptor;
 import org.eclipse.edc.spi.event.Event;
 import org.eclipse.edc.spi.event.EventEnvelope;
 import org.eclipse.edc.spi.event.EventSubscriber;
@@ -29,7 +30,7 @@ import org.eclipse.edc.spi.result.ServiceResult;
 
 import java.util.stream.Stream;
 
-import static org.eclipse.edc.identityhub.spi.participantcontext.model.ParticipantResource.queryByParticipantContextId;
+import static org.eclipse.edc.participantcontext.spi.types.ParticipantResource.queryByParticipantContextId;
 import static org.eclipse.edc.spi.result.ServiceResult.success;
 
 /**
@@ -49,9 +50,9 @@ class ParticipantContextEventCoordinator implements EventSubscriber {
     private final Monitor monitor;
     private final DidDocumentService didDocumentService;
     private final KeyPairService keyPairService;
-    private final ParticipantContextService participantContextService;
+    private final IdentityHubParticipantContextService participantContextService;
 
-    ParticipantContextEventCoordinator(Monitor monitor, DidDocumentService didDocumentService, KeyPairService keyPairService, ParticipantContextService participantContextService) {
+    ParticipantContextEventCoordinator(Monitor monitor, DidDocumentService didDocumentService, KeyPairService keyPairService, IdentityHubParticipantContextService participantContextService) {
         this.monitor = monitor;
         this.didDocumentService = didDocumentService;
         this.keyPairService = keyPairService;
@@ -69,16 +70,16 @@ class ParticipantContextEventCoordinator implements EventSubscriber {
                     // updating and adding a verification method happens as a result of the KeyPairAddedEvent
                     .build();
 
-            if (manifest.isActive() && !manifest.getKey().isActive()) {
+            if (manifest.isActive() && manifest.getKeys().stream().noneMatch(KeyDescriptor::isActive)) {
                 monitor.warning("The ParticipantContext is 'active', but its (only) KeyPair is 'inActive'. " +
                         "This will result in a DID Document without Verification Methods, and thus, an unusable ParticipantContext.");
             }
 
-            didDocumentService.store(doc, manifest.getParticipantId())
+            didDocumentService.store(doc, manifest.getParticipantContextId())
                     // adding the keypair event will cause the DidDocumentService to update the DID
-                    .compose(u -> keyPairService.addKeyPair(createdEvent.getParticipantContextId(), createdEvent.getManifest().getKey(), true))
+                    .compose(u -> storeKeyPairs(createdEvent))
                     .compose(u -> manifest.isActive()
-                            ? participantContextService.updateParticipant(manifest.getParticipantId(), ParticipantContext::activate) //implicitly publishes the did document
+                            ? participantContextService.updateParticipant(manifest.getParticipantContextId(), IdentityHubParticipantContext::activate) //implicitly publishes the did document
                             : success())
                     .onFailure(f -> monitor.warning("%s".formatted(f.getFailureDetail())));
 
@@ -97,6 +98,16 @@ class ParticipantContextEventCoordinator implements EventSubscriber {
         } else {
             monitor.warning("Received event with unexpected payload type: %s".formatted(payload.getClass()));
         }
+    }
+
+    private ServiceResult<Void> storeKeyPairs(ParticipantContextCreated createdEvent) {
+        var participantContextId = createdEvent.getParticipantContextId();
+        var keys = createdEvent.getManifest().getKeys();
+
+        return keys.stream().map(k -> keyPairService.addKeyPair(participantContextId, k, true))
+                .reduce((sr1, sr2) -> sr1.succeeded() && sr2.succeeded() ? success() :
+                        ServiceResult.unexpected(sr1.getFailureDetail(), sr2.getFailureDetail()))
+                .orElse(success());
     }
 
     private ServiceResult<Void> merge(ServiceResult<Void> sr1, ServiceResult<Void> sr2) {

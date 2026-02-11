@@ -16,9 +16,10 @@ package org.eclipse.edc.identityhub.tests;
 
 import io.restassured.http.ContentType;
 import io.restassured.http.Header;
-import org.eclipse.edc.identityhub.spi.participantcontext.ParticipantContextService;
-import org.eclipse.edc.identityhub.tests.fixtures.issuerservice.IssuerExtension;
-import org.eclipse.edc.identityhub.tests.fixtures.issuerservice.IssuerRuntime;
+import org.eclipse.edc.api.authentication.OauthServerEndToEndExtension;
+import org.eclipse.edc.identityhub.spi.participantcontext.IdentityHubParticipantContextService;
+import org.eclipse.edc.identityhub.tests.fixtures.DefaultRuntimes;
+import org.eclipse.edc.identityhub.tests.fixtures.issuerservice.IssuerService;
 import org.eclipse.edc.issuerservice.spi.issuance.attestation.AttestationDefinitionStore;
 import org.eclipse.edc.issuerservice.spi.issuance.credentialdefinition.CredentialDefinitionService;
 import org.eclipse.edc.issuerservice.spi.issuance.model.AttestationDefinition;
@@ -27,6 +28,8 @@ import org.eclipse.edc.issuerservice.spi.issuance.model.CredentialRuleDefinition
 import org.eclipse.edc.issuerservice.spi.issuance.model.MappingDefinition;
 import org.eclipse.edc.junit.annotations.EndToEndTest;
 import org.eclipse.edc.junit.annotations.PostgresqlIntegrationTest;
+import org.eclipse.edc.junit.extensions.ComponentRuntimeExtension;
+import org.eclipse.edc.junit.extensions.RuntimeExtension;
 import org.eclipse.edc.spi.query.Criterion;
 import org.eclipse.edc.spi.query.QuerySpec;
 import org.eclipse.edc.sql.testfixtures.PostgresqlEndToEndExtension;
@@ -43,10 +46,9 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.eclipse.edc.iam.verifiablecredentials.spi.model.CredentialFormat.VC1_0_JWT;
-import static org.eclipse.edc.identityhub.tests.TestData.ISSUER_RUNTIME_ID;
-import static org.eclipse.edc.identityhub.tests.TestData.ISSUER_RUNTIME_MEM_MODULES;
 import static org.eclipse.edc.identityhub.tests.TestData.ISSUER_RUNTIME_NAME;
-import static org.eclipse.edc.identityhub.tests.TestData.ISSUER_RUNTIME_SQL_MODULES;
+import static org.eclipse.edc.identityhub.tests.fixtures.TestFunctions.authorizeOauth2;
+import static org.eclipse.edc.identityhub.tests.fixtures.TestFunctions.authorizeTokenBased;
 import static org.eclipse.edc.junit.assertions.AbstractResultAssert.assertThat;
 import static org.hamcrest.Matchers.containsString;
 
@@ -57,7 +59,7 @@ public class CredentialDefinitionApiEndToEndTest {
         public static final String USER = "user";
 
         @AfterEach
-        void teardown(CredentialDefinitionService service, ParticipantContextService pcService) {
+        void teardown(CredentialDefinitionService service, IdentityHubParticipantContextService pcService) {
             service.queryCredentialDefinitions(QuerySpec.max()).getContent()
                     .forEach(p -> service.deleteCredentialDefinition(p.getId()).getContent());
 
@@ -66,8 +68,7 @@ public class CredentialDefinitionApiEndToEndTest {
         }
 
         @Test
-        void createCredentialDefinition(IssuerRuntime runtime, CredentialDefinitionService service, AttestationDefinitionStore store) {
-            var token = runtime.createParticipant(USER).apiKey();
+        void createCredentialDefinition(IssuerService issuer, CredentialDefinitionService service, AttestationDefinitionStore store) {
 
             store.create(AttestationDefinition.Builder.newInstance().id("test-attestation").attestationType("type").participantContextId("participantContextId").build());
 
@@ -89,9 +90,9 @@ public class CredentialDefinitionApiEndToEndTest {
                     .formatFrom(VC1_0_JWT)
                     .build();
 
-            runtime.getAdminEndpoint().baseRequest()
+            issuer.getAdminEndpoint().baseRequest()
                     .contentType(ContentType.JSON)
-                    .header(new Header("x-api-key", token))
+                    .header(authorizeUser(USER, issuer))
                     .body(definition)
                     .post("/v1alpha/participants/%s/credentialdefinitions".formatted(toBase64(USER)))
                     .then()
@@ -100,12 +101,12 @@ public class CredentialDefinitionApiEndToEndTest {
 
             assertThat(service.findCredentialDefinitionById(definition.getId())).isSucceeded()
                     .usingRecursiveComparison()
+                    .ignoringFields("createdAt")
                     .isEqualTo(definition);
         }
 
         @Test
-        void createCredentialDefinition_whenRuleValidationFails(IssuerRuntime runtime, AttestationDefinitionStore store) {
-            var token = runtime.createParticipant(USER).apiKey();
+        void createCredentialDefinition_whenRuleValidationFails(IssuerService issuer, AttestationDefinitionStore store) {
 
 
             store.create(AttestationDefinition.Builder.newInstance().id("test-attestation").attestationType("type").participantContextId("participantContextId").build());
@@ -123,9 +124,9 @@ public class CredentialDefinitionApiEndToEndTest {
                     .formatFrom(VC1_0_JWT)
                     .build();
 
-            runtime.getAdminEndpoint().baseRequest()
+            issuer.getAdminEndpoint().baseRequest()
                     .contentType(ContentType.JSON)
-                    .header(new Header("x-api-key", token))
+                    .header(authorizeUser(USER, issuer))
                     .body(definition)
                     .post("/v1alpha/participants/%s/credentialdefinitions".formatted(toBase64(USER)))
                     .then()
@@ -134,8 +135,8 @@ public class CredentialDefinitionApiEndToEndTest {
         }
 
         @Test
-        void createCredentialDefinition_whenExists(IssuerRuntime runtime, CredentialDefinitionService service) {
-            var token = runtime.createParticipant(USER).apiKey();
+        void createCredentialDefinition_whenExists(IssuerService issuer, CredentialDefinitionService service) {
+            issuer.createParticipant(USER);
 
             var definition = CredentialDefinition.Builder.newInstance()
                     .id("test-definition-id")
@@ -148,9 +149,9 @@ public class CredentialDefinitionApiEndToEndTest {
 
             service.createCredentialDefinition(definition);
 
-            runtime.getAdminEndpoint().baseRequest()
+            issuer.getAdminEndpoint().baseRequest()
                     .contentType(ContentType.JSON)
-                    .header(new Header("x-api-key", token))
+                    .header(authorizeUser(USER, issuer))
                     .body("""
                             {
                               "id": "test-definition-id",
@@ -167,8 +168,8 @@ public class CredentialDefinitionApiEndToEndTest {
         }
 
         @Test
-        void createCredentialDefinition_whenCredentialTypeExists(IssuerRuntime runtime, CredentialDefinitionService service) {
-            var token = runtime.createParticipant(USER).apiKey();
+        void createCredentialDefinition_whenCredentialTypeExists(IssuerService issuer, CredentialDefinitionService service) {
+            issuer.createParticipant(USER);
 
             var definition = CredentialDefinition.Builder.newInstance()
                     .id("id")
@@ -181,9 +182,9 @@ public class CredentialDefinitionApiEndToEndTest {
 
             service.createCredentialDefinition(definition);
 
-            runtime.getAdminEndpoint().baseRequest()
+            issuer.getAdminEndpoint().baseRequest()
                     .contentType(ContentType.JSON)
-                    .header(new Header("x-api-key", token))
+                    .header(authorizeUser(USER, issuer))
                     .body("""
                             {
                               "id": "test-definition-id",
@@ -200,12 +201,12 @@ public class CredentialDefinitionApiEndToEndTest {
         }
 
         @Test
-        void createCredentialDefinition_whenMissingFields(IssuerRuntime runtime) {
-            var token = runtime.createParticipant(USER).apiKey();
+        void createCredentialDefinition_whenMissingFields(IssuerService issuer) {
+            issuer.createParticipant(USER);
 
-            runtime.getAdminEndpoint().baseRequest()
+            issuer.getAdminEndpoint().baseRequest()
                     .contentType(ContentType.JSON)
-                    .header(new Header("x-api-key", token))
+                    .header(authorizeUser(USER, issuer))
                     .body("""
                             {
                               "id": "test-definition-id"
@@ -217,12 +218,12 @@ public class CredentialDefinitionApiEndToEndTest {
         }
 
         @Test
-        void createCredentialDefinition_whenMissingAttestations(IssuerRuntime runtime) {
-            var token = runtime.createParticipant(USER).apiKey();
+        void createCredentialDefinition_whenMissingAttestations(IssuerService issuer) {
+            issuer.createParticipant(USER);
 
-            runtime.getAdminEndpoint().baseRequest()
+            issuer.getAdminEndpoint().baseRequest()
                     .contentType(ContentType.JSON)
-                    .header(new Header("x-api-key", token))
+                    .header(authorizeUser(USER, issuer))
                     .body("""
                             {
                               "id": "test-definition-id",
@@ -241,8 +242,8 @@ public class CredentialDefinitionApiEndToEndTest {
 
 
         @Test
-        void queryCredentialDefinitions(IssuerRuntime runtime, CredentialDefinitionService service) {
-            var token = runtime.createParticipant(USER).apiKey();
+        void queryCredentialDefinitions(IssuerService issuer, CredentialDefinitionService service) {
+            issuer.createParticipant(USER);
 
             var definition = CredentialDefinition.Builder.newInstance()
                     .id("id")
@@ -255,9 +256,9 @@ public class CredentialDefinitionApiEndToEndTest {
 
             service.createCredentialDefinition(definition);
 
-            var res = runtime.getAdminEndpoint().baseRequest()
+            var res = issuer.getAdminEndpoint().baseRequest()
                     .contentType(ContentType.JSON)
-                    .header(new Header("x-api-key", token))
+                    .header(authorizeUser(USER, issuer))
                     .body(QuerySpec.Builder.newInstance().filter(new Criterion("credentialType", "=", "MembershipCredential")).build())
                     .post("/v1alpha/participants/%s/credentialdefinitions/query".formatted(toBase64(USER)))
                     .then()
@@ -269,8 +270,8 @@ public class CredentialDefinitionApiEndToEndTest {
         }
 
         @Test
-        void queryCredentialDefinitions_noResult_whenNotAuthorized(IssuerRuntime runtime, CredentialDefinitionService service) {
-            var token = runtime.createParticipant(USER).apiKey();
+        void queryCredentialDefinitions_noResult_whenNotAuthorized(IssuerService issuer, CredentialDefinitionService service) {
+            issuer.createParticipant(USER);
 
             var definition = CredentialDefinition.Builder.newInstance()
                     .id("id")
@@ -283,9 +284,9 @@ public class CredentialDefinitionApiEndToEndTest {
 
             service.createCredentialDefinition(definition);
 
-            var res = runtime.getAdminEndpoint().baseRequest()
+            var res = issuer.getAdminEndpoint().baseRequest()
                     .contentType(ContentType.JSON)
-                    .header(new Header("x-api-key", token))
+                    .header(authorizeUser(USER, issuer))
                     .body(QuerySpec.Builder.newInstance().filter(new Criterion("id", "=", definition.getId())).build())
                     .post("/v1alpha/participants/%s/credentialdefinitions/query".formatted(toBase64(USER)))
                     .then()
@@ -297,12 +298,12 @@ public class CredentialDefinitionApiEndToEndTest {
         }
 
         @Test
-        void queryCredentialDefinitions_noResult(IssuerRuntime runtime) {
-            var token = runtime.createParticipant(USER).apiKey();
+        void queryCredentialDefinitions_noResult(IssuerService issuer) {
+            issuer.createParticipant(USER);
 
-            var res = runtime.getAdminEndpoint().baseRequest()
+            var res = issuer.getAdminEndpoint().baseRequest()
                     .contentType(ContentType.JSON)
-                    .header(new Header("x-api-key", token))
+                    .header(authorizeUser(USER, issuer))
                     .body(QuerySpec.Builder.newInstance().filter(new Criterion("id", "=", "test-credential-definition-id")).build())
                     .post("/v1alpha/participants/%s/credentialdefinitions/query".formatted(toBase64(USER)))
                     .then()
@@ -314,8 +315,8 @@ public class CredentialDefinitionApiEndToEndTest {
         }
 
         @Test
-        void getById(IssuerRuntime runtime, CredentialDefinitionService service) {
-            var token = runtime.createParticipant(USER).apiKey();
+        void getById(IssuerService issuer, CredentialDefinitionService service) {
+            issuer.createParticipant(USER);
 
             var definition = CredentialDefinition.Builder.newInstance()
                     .id("test-credential-definition-id")
@@ -328,8 +329,8 @@ public class CredentialDefinitionApiEndToEndTest {
 
             service.createCredentialDefinition(definition);
 
-            var res = runtime.getAdminEndpoint().baseRequest()
-                    .header(new Header("x-api-key", token))
+            var res = issuer.getAdminEndpoint().baseRequest()
+                    .header(authorizeUser(USER, issuer))
                     .get("/v1alpha/participants/%s/credentialdefinitions/test-credential-definition-id".formatted(toBase64(USER)))
                     .then()
                     .statusCode(200)
@@ -340,8 +341,8 @@ public class CredentialDefinitionApiEndToEndTest {
         }
 
         @Test
-        void getById_whenNotAuthorized(IssuerRuntime runtime, CredentialDefinitionService service) {
-            var token = runtime.createParticipant(USER).apiKey();
+        void getById_whenWrongOwner(IssuerService issuer, CredentialDefinitionService service) {
+            issuer.createParticipant(USER);
 
             var definition = CredentialDefinition.Builder.newInstance()
                     .id("test-credential-definition-id")
@@ -354,8 +355,31 @@ public class CredentialDefinitionApiEndToEndTest {
 
             service.createCredentialDefinition(definition);
 
-            runtime.getAdminEndpoint().baseRequest()
-                    .header(new Header("x-api-key", token))
+            issuer.getAdminEndpoint().baseRequest()
+                    .header(authorizeUser(USER, issuer))
+                    .get("/v1alpha/participants/%s/credentialdefinitions/test-credential-definition-id".formatted(toBase64(USER)))
+                    .then()
+                    .statusCode(404);
+
+        }
+
+        @Test
+        void getById_whenNotAuthorized(IssuerService issuer, CredentialDefinitionService service) {
+            issuer.createParticipant(USER);
+
+            var definition = CredentialDefinition.Builder.newInstance()
+                    .id("test-credential-definition-id")
+                    .jsonSchema("{}")
+                    .jsonSchemaUrl("http://example.com/schema")
+                    .credentialType("MembershipCredential")
+                    .participantContextId(USER)
+                    .formatFrom(VC1_0_JWT)
+                    .build();
+
+            service.createCredentialDefinition(definition);
+
+            issuer.getAdminEndpoint().baseRequest()
+                    .header(authorizeUser("anotherUser", issuer))
                     .get("/v1alpha/participants/%s/credentialdefinitions/test-credential-definition-id".formatted(toBase64(USER)))
                     .then()
                     .statusCode(403);
@@ -363,22 +387,21 @@ public class CredentialDefinitionApiEndToEndTest {
         }
 
         @Test
-        void getById_whenNotFound(IssuerRuntime runtime) {
-            var token = runtime.createParticipant(USER).apiKey();
+        void getById_whenNotFound(IssuerService issuer) {
+            issuer.createParticipant(USER);
 
 
-            runtime.getAdminEndpoint().baseRequest()
-                    .header(new Header("x-api-key", token))
+            issuer.getAdminEndpoint().baseRequest()
+                    .header(authorizeUser(USER, issuer))
                     .get("/v1alpha/participants/%s/credentialdefinitions/test-credential-definition-id".formatted(toBase64(USER)))
                     .then()
                     .statusCode(404);
-
         }
 
 
         @Test
-        void updateCredentialDefinition(IssuerRuntime runtime, CredentialDefinitionService service) {
-            var token = runtime.createParticipant(USER).apiKey();
+        void updateCredentialDefinition(IssuerService issuer, CredentialDefinitionService service) {
+            issuer.createParticipant(USER);
 
             var definition = CredentialDefinition.Builder.newInstance()
                     .id("test-credential-definition-id")
@@ -400,9 +423,9 @@ public class CredentialDefinitionApiEndToEndTest {
                     .formatFrom(VC1_0_JWT)
                     .build();
 
-            runtime.getAdminEndpoint().baseRequest()
+            issuer.getAdminEndpoint().baseRequest()
                     .contentType(ContentType.JSON)
-                    .header(new Header("x-api-key", token))
+                    .header(authorizeUser(USER, issuer))
                     .body(definition)
                     .put("/v1alpha/participants/%s/credentialdefinitions".formatted(toBase64(USER)))
                     .then()
@@ -410,26 +433,28 @@ public class CredentialDefinitionApiEndToEndTest {
 
             var updatedDefinition = service.findCredentialDefinitionById(definition.getId()).getContent();
 
-            assertThat(updatedDefinition).usingRecursiveComparison().isEqualTo(definition);
+            assertThat(updatedDefinition).usingRecursiveComparison()
+                    .ignoringFields("createdAt")
+                    .isEqualTo(definition);
         }
 
         @Test
-        void updateCredentialDefinition_whenNotFound(IssuerRuntime runtime, CredentialDefinitionService service) {
-            var token = runtime.createParticipant(USER).apiKey();
+        void updateCredentialDefinition_whenNotFound(IssuerService issuer, CredentialDefinitionService service) {
+            issuer.createParticipant(USER);
 
             var definition = CredentialDefinition.Builder.newInstance()
                     .id("test-credential-definition-id")
                     .jsonSchema("{}")
                     .jsonSchemaUrl("http://example.com/schema")
                     .credentialType("MembershipCredential")
-                    .participantContextId("participantContextId")
+                    .participantContextId(USER)
                     .formatFrom(VC1_0_JWT)
                     .build();
 
 
-            runtime.getAdminEndpoint().baseRequest()
+            issuer.getAdminEndpoint().baseRequest()
                     .contentType(ContentType.JSON)
-                    .header(new Header("x-api-key", token))
+                    .header(authorizeUser(USER, issuer))
                     .body(definition)
                     .put("/v1alpha/participants/%s/credentialdefinitions".formatted(toBase64(USER)))
                     .then()
@@ -438,8 +463,8 @@ public class CredentialDefinitionApiEndToEndTest {
         }
 
         @Test
-        void updateCredentialDefinition_whenNotAuthorized(IssuerRuntime runtime, CredentialDefinitionService service) {
-            var token = runtime.createParticipant(USER).apiKey();
+        void updateCredentialDefinition_whenParticipantDoesNotOwnResource(IssuerService issuer, CredentialDefinitionService service) {
+            issuer.createParticipant(USER);
 
             var definition = CredentialDefinition.Builder.newInstance()
                     .id("test-credential-definition-id")
@@ -461,19 +486,20 @@ public class CredentialDefinitionApiEndToEndTest {
                     .formatFrom(VC1_0_JWT)
                     .build();
 
-            runtime.getAdminEndpoint().baseRequest()
+            issuer.getAdminEndpoint().baseRequest()
                     .contentType(ContentType.JSON)
-                    .header(new Header("x-api-key", token))
+                    .header(authorizeUser(USER, issuer))
                     .body(definition)
                     .put("/v1alpha/participants/%s/credentialdefinitions".formatted(toBase64(USER)))
                     .then()
-                    .statusCode(403);
+                    .statusCode(404);
 
         }
 
+
         @Test
-        void deleteCredentialDefinition(IssuerRuntime runtime, CredentialDefinitionService service) {
-            var token = runtime.createParticipant(USER).apiKey();
+        void updateCredentialDefinition_whenNotAuthorized(IssuerService issuer, CredentialDefinitionService service) {
+            issuer.createParticipant(USER);
 
             var definition = CredentialDefinition.Builder.newInstance()
                     .id("test-credential-definition-id")
@@ -486,8 +512,42 @@ public class CredentialDefinitionApiEndToEndTest {
 
             service.createCredentialDefinition(definition);
 
-            runtime.getAdminEndpoint().baseRequest()
-                    .header(new Header("x-api-key", token))
+            definition = CredentialDefinition.Builder.newInstance()
+                    .id("test-credential-definition-id")
+                    .jsonSchema("{}")
+                    .jsonSchemaUrl("http://example.com/schema")
+                    .credentialType("MembershipCredential")
+                    .participantContextId(USER)
+                    .formatFrom(VC1_0_JWT)
+                    .build();
+
+            issuer.getAdminEndpoint().baseRequest()
+                    .contentType(ContentType.JSON)
+                    .header(authorizeUser("anotherUser", issuer))
+                    .body(definition)
+                    .put("/v1alpha/participants/%s/credentialdefinitions".formatted(toBase64(USER)))
+                    .then()
+                    .statusCode(403);
+
+        }
+
+        @Test
+        void deleteCredentialDefinition(IssuerService issuer, CredentialDefinitionService service) {
+            issuer.createParticipant(USER);
+
+            var definition = CredentialDefinition.Builder.newInstance()
+                    .id("test-credential-definition-id")
+                    .jsonSchema("{}")
+                    .jsonSchemaUrl("http://example.com/schema")
+                    .credentialType("MembershipCredential")
+                    .participantContextId(USER)
+                    .formatFrom(VC1_0_JWT)
+                    .build();
+
+            service.createCredentialDefinition(definition);
+
+            issuer.getAdminEndpoint().baseRequest()
+                    .header(authorizeUser(USER, issuer))
                     .delete("/v1alpha/participants/%s/credentialdefinitions/test-credential-definition-id".formatted(toBase64(USER)))
                     .then()
                     .statusCode(204);
@@ -497,12 +557,12 @@ public class CredentialDefinitionApiEndToEndTest {
         }
 
         @Test
-        void deleteCredentialDefinition_whenNotExists(IssuerRuntime runtime) {
-            var token = runtime.createParticipant(USER).apiKey();
+        void deleteCredentialDefinition_whenNotExists(IssuerService issuer) {
+            issuer.createParticipant(USER);
 
 
-            runtime.getAdminEndpoint().baseRequest()
-                    .header(new Header("x-api-key", token))
+            issuer.getAdminEndpoint().baseRequest()
+                    .header(authorizeUser(USER, issuer))
                     .delete("/v1alpha/participants/%s/credentialdefinitions/test-credential-definition-id".formatted(toBase64(USER)))
                     .then()
                     .statusCode(404);
@@ -510,9 +570,8 @@ public class CredentialDefinitionApiEndToEndTest {
         }
 
         @Test
-        void deleteCredentialDefinition_whenNotAuthorized(IssuerRuntime runtime, CredentialDefinitionService service) {
-            runtime.createParticipant(USER);
-            var token = runtime.createParticipant("anotherUser").apiKey();
+        void deleteCredentialDefinition_whenNotAuthorized(IssuerService issuer, CredentialDefinitionService service) {
+            issuer.createParticipant(USER);
 
             var definition = CredentialDefinition.Builder.newInstance()
                     .id("test-credential-definition-id")
@@ -525,13 +584,15 @@ public class CredentialDefinitionApiEndToEndTest {
 
             service.createCredentialDefinition(definition);
 
-            runtime.getAdminEndpoint().baseRequest()
-                    .header(new Header("x-api-key", token))
+            issuer.getAdminEndpoint().baseRequest()
+                    .header(authorizeUser("another-user", issuer))
                     .delete("/v1alpha/participants/%s/credentialdefinitions/test-credential-definition-id".formatted(toBase64(USER)))
                     .then()
                     .statusCode(403);
 
         }
+
+        protected abstract Header authorizeUser(String participantContextId, IssuerService issuerService);
 
         private String toBase64(String s) {
             return Base64.getUrlEncoder().encodeToString(s.getBytes());
@@ -543,11 +604,18 @@ public class CredentialDefinitionApiEndToEndTest {
     class InMemory extends Tests {
 
         @RegisterExtension
-        static final IssuerExtension ISSUER_EXTENSION = IssuerExtension.Builder.newInstance()
-                .id(ISSUER_RUNTIME_ID)
+        static final RuntimeExtension ISSUER_EXTENSION = ComponentRuntimeExtension.Builder.newInstance()
                 .name(ISSUER_RUNTIME_NAME)
-                .modules(ISSUER_RUNTIME_MEM_MODULES)
+                .modules(DefaultRuntimes.Issuer.MODULES)
+                .endpoints(DefaultRuntimes.Issuer.ENDPOINTS.build())
+                .configurationProvider(DefaultRuntimes.Issuer::config)
+                .paramProvider(IssuerService.class, IssuerService::forContext)
                 .build();
+
+        @Override
+        protected Header authorizeUser(String participantContextId, IssuerService issuerService) {
+            return authorizeTokenBased(participantContextId, issuerService);
+        }
     }
 
     @Nested
@@ -568,11 +636,86 @@ public class CredentialDefinitionApiEndToEndTest {
 
         @Order(2)
         @RegisterExtension
-        static final IssuerExtension ISSUER_EXTENSION = IssuerExtension.Builder.newInstance()
-                .id(ISSUER_RUNTIME_ID)
+        static final RuntimeExtension ISSUER_EXTENSION = ComponentRuntimeExtension.Builder.newInstance()
                 .name(ISSUER_RUNTIME_NAME)
-                .modules(ISSUER_RUNTIME_SQL_MODULES)
+                .modules(DefaultRuntimes.Issuer.SQL_MODULES)
+                .endpoints(DefaultRuntimes.Issuer.ENDPOINTS.build())
+                .configurationProvider(DefaultRuntimes.Issuer::config)
                 .configurationProvider(() -> POSTGRESQL_EXTENSION.configFor(ISSUER))
+                .paramProvider(IssuerService.class, IssuerService::forContext)
                 .build();
+
+        @Override
+        protected Header authorizeUser(String participantContextId, IssuerService issuerService) {
+            return authorizeTokenBased(participantContextId, issuerService);
+        }
+    }
+
+    @Nested
+    @EndToEndTest
+    class InMemoryOauth2 extends Tests {
+        private static final String ISSUER = "issuer";
+
+        @Order(0)
+        @RegisterExtension
+        static final OauthServerEndToEndExtension OAUTH_2_EXTENSION = OauthServerEndToEndExtension.Builder.newInstance()
+                .issuer(ISSUER)
+                .signingKeyId("signing-key-id")
+                .build();
+
+        @RegisterExtension
+        static final RuntimeExtension ISSUER_EXTENSION = ComponentRuntimeExtension.Builder.newInstance()
+                .name(ISSUER_RUNTIME_NAME)
+                .modules(DefaultRuntimes.Issuer.MODULES_OAUTH2)
+                .endpoints(DefaultRuntimes.Issuer.ENDPOINTS.build())
+                .configurationProvider(DefaultRuntimes.Issuer::config)
+                .configurationProvider(OAUTH_2_EXTENSION::getConfig)
+                .paramProvider(IssuerService.class, IssuerService::forContext)
+                .build();
+
+
+        @Override
+        protected Header authorizeUser(String participantContextId, IssuerService issuerService) {
+            return authorizeOauth2(participantContextId, issuerService, OAUTH_2_EXTENSION.getAuthServer());
+        }
+    }
+
+    @Nested
+    @PostgresqlIntegrationTest
+    class PostgresOauth2 extends Tests {
+        @Order(0)
+        @RegisterExtension
+        static final PostgresqlEndToEndExtension POSTGRESQL_EXTENSION = new PostgresqlEndToEndExtension();
+        private static final String ISSUER = "issuer";
+
+        @Order(0)
+        @RegisterExtension
+        static final OauthServerEndToEndExtension OAUTH_2_EXTENSION = OauthServerEndToEndExtension.Builder.newInstance()
+                .issuer(ISSUER)
+                .signingKeyId("signing-key-id")
+                .build();
+
+        @Order(2)
+        @RegisterExtension
+        static final RuntimeExtension ISSUER_EXTENSION = ComponentRuntimeExtension.Builder.newInstance()
+                .name(ISSUER_RUNTIME_NAME)
+                .modules(DefaultRuntimes.Issuer.SQL_OAUTH2_MODULES)
+                .endpoints(DefaultRuntimes.Issuer.ENDPOINTS.build())
+                .configurationProvider(DefaultRuntimes.Issuer::config)
+                .configurationProvider(OAUTH_2_EXTENSION::getConfig)
+                .configurationProvider(() -> POSTGRESQL_EXTENSION.configFor(ISSUER))
+                .paramProvider(IssuerService.class, IssuerService::forContext)
+                .build();
+
+        @Order(1)
+        @RegisterExtension
+        static final BeforeAllCallback POSTGRES_CONTAINER_STARTER = context -> {
+            POSTGRESQL_EXTENSION.createDatabase(ISSUER);
+        };
+
+        @Override
+        protected Header authorizeUser(String participantContextId, IssuerService issuerService) {
+            return authorizeOauth2(participantContextId, issuerService, OAUTH_2_EXTENSION.getAuthServer());
+        }
     }
 }

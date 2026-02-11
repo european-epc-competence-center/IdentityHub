@@ -38,19 +38,25 @@ public class ParticipantManifestValidator implements Validator<ParticipantManife
             return failure(violation("input was null.", "."));
         }
 
-        if (input.getKey() == null) {
-            return failure(violation("key descriptor cannot be null.", "key"));
+        if (input.getKeys() == null) {
+            return failure(violation("key descriptor cannot be null.", "keys"));
         }
-        if (StringUtils.isNullOrBlank(input.getParticipantId())) {
-            return failure(violation("participantId cannot be null or empty.", "participantId"));
+        if (input.getKeys().isEmpty()) {
+            return failure(violation("key descriptor cannot be empty.", "keys"));
+        }
+        if (StringUtils.isNullOrBlank(input.getParticipantContextId())) {
+            return failure(violation("participantContextId cannot be null or empty.", "participantContextId"));
         }
         if (StringUtils.isNullOrBlank(input.getDid())) {
             return failure(violation("DID cannot be null or empty.", "did"));
         }
 
-        var keyValidationResult = keyDescriptorValidator.validate(input.getKey());
-        if (keyValidationResult.failed()) {
-            return failure(violation("key descriptor is invalid: %s".formatted(keyValidationResult.getFailureDetail()), "key"));
+        var mergedResult = input.getKeys().stream()
+                .map(keyDescriptorValidator::validate)
+                .reduce(ValidationResult::merge)
+                .orElse(success());
+        if (mergedResult.failed()) {
+            return failure(violation("key descriptor is invalid: %s".formatted(mergedResult.getFailureDetail()), "key"));
         }
 
 
