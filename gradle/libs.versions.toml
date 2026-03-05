@@ -4,22 +4,22 @@ format.version = "1.1"
 [versions]
 awaitility = "4.3.0"
 bouncyCastle-jdk18on = "1.83"
-edc = "0.16.0-SNAPSHOT"
+edc = "0.17.0-SNAPSHOT"
 dcp-tck = "1.0.0-RC6"
 jackson = "2.21"
 jakarta-annotation = "2.1.1"
 jersey = "4.0.2"
 jupiter = "6.0.2"
-junit = "6.0.2"
+junit = "6.0.3"
 mockserver = "5.15.0"
-nimbus = "10.7"
-postgres = "42.7.9"
+nimbus = "10.8"
+postgres = "42.7.10"
 restAssured = "6.0.0"
-swagger = "2.2.42"
+swagger = "2.2.43"
 rsApi = "4.0.0"
 testcontainers = "1.21.4"
 tink = "1.20.0"
-opentelemetry = "2.24.0"
+opentelemetry = "2.25.0"
 
 [libraries]
 
@@ -85,15 +85,17 @@ edc-lib-token = { module = "org.eclipse.edc:token-lib", version.ref = "edc" }
 edc-lib-transform = { module = "org.eclipse.edc:transform-lib", version.ref = "edc" }
 edc-lib-util = { module = "org.eclipse.edc:util-lib", version.ref = "edc" }
 edc-lib-validator = { module = "org.eclipse.edc:validator-lib", version.ref = "edc" }
+
 # SQL dependencies
 edc-sql-bootstrapper = { module = "org.eclipse.edc:sql-bootstrapper", version.ref = "edc" }
 edc-sql-core = { module = "org.eclipse.edc:sql-core", version.ref = "edc" }
+edc-sql-jtivdalidation = { module = "org.eclipse.edc:jti-validation-store-sql", version.ref = "edc" }
 edc-sql-lease = { module = "org.eclipse.edc:sql-lease", version.ref = "edc" }
 edc-sql-lease-core = { module = "org.eclipse.edc:sql-lease-core", version.ref = "edc" }
-edc-sql-jtivdalidation = { module = "org.eclipse.edc:jti-validation-store-sql", version.ref = "edc" }
+edc-sql-participantcontext = { module = "org.eclipse.edc:participantcontext-store-sql", version.ref = "edc" }
+edc-sql-participantcontext-config = { module = "org.eclipse.edc:participantcontext-config-store-sql", version.ref = "edc" }
 edc-sql-pool = { module = "org.eclipse.edc:sql-pool-apache-commons", version.ref = "edc" }
 edc-sql-test-fixtures = { module = "org.eclipse.edc:sql-test-fixtures", version.ref = "edc" }
-edc-sql-participantcontext = { module = "org.eclipse.edc:participantcontext-store-sql", version.ref = "edc" }
 
 # Third party libs
 awaitility = { module = "org.awaitility:awaitility", version.ref = "awaitility" }
@@ -137,5 +139,5 @@ connector = [
 ]
 
 [plugins]
-edc-build = { id = "org.eclipse.edc.edc-build", version = "1.1.6" }
-shadow = { id = "com.gradleup.shadow", version = "9.3.1" }
+edc-build = { id = "org.eclipse.edc.edc-build", version = "1.2.0" }
+shadow = { id = "com.gradleup.shadow", version = "9.3.2" }
