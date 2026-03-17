@@ -50,6 +50,7 @@ import org.junit.jupiter.api.extension.BeforeAllCallback;
 import org.junit.jupiter.api.extension.RegisterExtension;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 
 import static io.restassured.RestAssured.given;
@@ -59,7 +60,6 @@ import static org.awaitility.Awaitility.await;
 import static org.eclipse.edc.iam.verifiablecredentials.spi.model.CredentialFormat.VC1_0_JWT;
 import static org.eclipse.edc.identityhub.tests.dcp.TestData.IH_RUNTIME_NAME;
 import static org.eclipse.edc.identityhub.tests.dcp.TestData.ISSUER_RUNTIME_NAME;
-import static org.eclipse.edc.identityhub.tests.fixtures.common.TestFunctions.base64Encode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.refEq;
 import static org.mockito.Mockito.mock;
@@ -125,7 +125,7 @@ public class DcpIssuanceFlowEndToEndTest {
                     .contentType(JSON)
                     .header(new Header("x-api-key", participantToken))
                     .body(request)
-                    .post("/v1alpha/participants/%s/credentials/request".formatted(base64Encode(PARTICIPANT_ID)))
+                    .post("/v1alpha/participants/%s/credentials/request".formatted(PARTICIPANT_ID))
                     .then()
                     .log().ifValidationFails()
                     .statusCode(201)
@@ -156,10 +156,11 @@ public class DcpIssuanceFlowEndToEndTest {
                         assertThat(vc.getStateAsEnum()).isEqualTo(VcStatus.ISSUED);
                         assertThat(vc.getIssuerId()).isEqualTo(issuerDid);
                         assertThat(vc.getHolderId()).isEqualTo(participantDid);
-                        assertThat(vc.getVerifiableCredential().credential().getCredentialStatus()).isNotEmpty()
-                                .anySatisfy(t -> {
-                                    assertThat(t.getProperty("", "statusPurpose").toString()).isEqualTo("revocation");
-                                });
+                        assertThat(vc.getVerifiableCredential().credential()).satisfies(v -> {
+                            assertThat(v.getCredentialStatus()).isNotEmpty()
+                                    .anySatisfy(t -> assertThat(t.getProperty("", "statusPurpose").toString()).isEqualTo("revocation"));
+                            assertThat(v.getContext()).contains("https://example.com/credentials/membership/v1");
+                        });
                     });
 
             // checks that the credential was issued on the issuer side
@@ -169,8 +170,11 @@ public class DcpIssuanceFlowEndToEndTest {
                         assertThat(vc.getStateAsEnum()).isEqualTo(VcStatus.ISSUED);
                         assertThat(vc.getIssuerId()).isEqualTo(issuerDid);
                         assertThat(vc.getHolderId()).isEqualTo(participantDid);
-                        assertThat(vc.getVerifiableCredential().credential().getCredentialStatus()).hasSize(1)
-                                .allSatisfy(t -> assertThat(t.type()).isEqualTo("BitstringStatusListEntry"));
+                        assertThat(vc.getVerifiableCredential().credential()).satisfies(v -> {
+                            assertThat(v.getCredentialStatus()).hasSize(1)
+                                    .allSatisfy(t -> assertThat(t.type()).isEqualTo("BitstringStatusListEntry"));
+                            assertThat(v.getContext()).contains("https://example.com/credentials/membership/v1");
+                        });
                     });
 
             // verify that the status credential on the issuer side is accessible
@@ -214,6 +218,7 @@ public class DcpIssuanceFlowEndToEndTest {
             var credentialDefinition = CredentialDefinition.Builder.newInstance()
                     .id("membershipCredential-id")
                     .credentialType("MembershipCredential")
+                    .additionalContext(List.of("https://example.com/credentials/membership/v1"))
                     .jsonSchemaUrl("https://example.com/schema")
                     .jsonSchema("{}")
                     .attestation(attestationDefinition.getId())
